@@ -233,8 +233,8 @@ class Preprocessing:
 
 root_path = '/Users/federicotampieri/Downloads' # path where zipped files are stored
 
-root_caching_folder = "/Users/federicotampieri/Downloads/RL_Trader_Caching" # processed cached data folder
-#security_root_caching_folder = f"{root_caching_folder}/{security}" # individual security folder
+root_caching_folder = '/Users/federicotampieri/Downloads/RL_Trader_Caching' # processed cached data folder
+#security_root_caching_folder = f'{root_caching_folder}/{security}' # individual security folder
 
 security = 'USDT_BTC'
 
