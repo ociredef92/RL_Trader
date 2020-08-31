@@ -27,7 +27,7 @@ class Preprocessing:
 
     # method that generates file path
     def file_path(self, date, time):
-        path_string = self.root_path + self.security + '_' + date + '/' +                                                             date.replace('/', '') + '_' + time + '.json.gz'
+        path_string = f"{self.root_path}/{self.security}/{date}/{date.replace('/', '')}_{time}.json.gz"
         return path_string
     
 
@@ -116,7 +116,7 @@ class Preprocessing:
                        'mid_std', 'mean_spread']
         
         if caching:
-            df_bbo_bars.to_csv(f'{root_caching_folder}{security}/bbo.csv', mode='a', header=False)
+            df_bbo_bars.to_csv(f'{root_caching_folder}/{security}/bbo.csv', mode='a', header=False)
         
         return df_bbo_bars
 
@@ -161,7 +161,7 @@ class Preprocessing:
         
         if caching:
 
-            ba_depth_bars.to_csv(f'{root_caching_folder}{security}/depth.csv', mode='a', header=False)
+            ba_depth_bars.to_csv(f'{root_caching_folder}/{security}/depth.csv', mode='a', header=False)
             
         return ba_depth_bars
     
@@ -178,36 +178,36 @@ class Preprocessing:
     
         # Create subfolder for security of interest - if it does not exist
         try:
-            os.makedirs(f"{root_caching_folder}{security}/")
-            print(f'created {root_caching_folder}{security}/ subfolder')
+            os.makedirs(f"{root_caching_folder}/{security}")
+            print(f'created {root_caching_folder}/{security} subfolder')
         except FileExistsError:
             # directory already exists
             pass
         
         # If the file does not exist, create depth with headers
-        if os.path.exists(f'{root_caching_folder}{security}/depth.csv'):
+        if os.path.exists(f'{root_caching_folder}/{security}/depth.csv'):
             self.cached_date_ranges('depth')
         else:
             pd.DataFrame([],columns=['bid_tight_depth','bid_medium_depth', 'bid_wide_depth', 'ask_tight_depth', 
                                     'ask_medium_depth', 'ask_wide_depth']
-                                    ).to_csv(f'{root_caching_folder}{security}/depth.csv', mode='w', header=True)
-            print(f'Created {root_caching_folder}{security}/depth.csv')
+                                    ).to_csv(f'{root_caching_folder}/{security}/depth.csv', mode='w', header=True)
+            print(f'Created {root_caching_folder}/{security}/depth.csv')
 
         # If the file does not exist, create bbo with headers
-        if os.path.exists(f'{root_caching_folder}{security}/bbo.csv'):
+        if os.path.exists(f'{root_caching_folder}/{security}/bbo.csv'):
             #check daterange of data already cached
             self.cached_date_ranges('bbo')
         else:
             pd.DataFrame([], columns=['mid_mean' , 'mid_high', 'mid_low', 'mid_open', 'mid_close', 'mid_#_obs', 
                                       'mid_std', 'mean_spread']
-                                    ).to_csv(f'{root_caching_folder}{security}/bbo.csv', mode='w', header=True)
-            print(f'Created {root_caching_folder}{security}/bbo.csv')
+                                    ).to_csv(f'{root_caching_folder}/{security}/bbo.csv', mode='w', header=True)
+            print(f'Created {root_caching_folder}/{security}/bbo.csv')
 
 
     
     def cached_date_ranges(self, df_type):
         if df_type == 'depth':
-            date_range_depth = pd.read_csv(f'{root_caching_folder}{security}/depth.csv', header=0, index_col=0).index
+            date_range_depth = pd.read_csv(f'{root_caching_folder}/{security}/depth.csv', header=0, index_col=0).index
             #return date_range_depth
             print(f'''Depth data already cached:
                     Dataframe size: {date_range_depth.shape},
@@ -217,7 +217,7 @@ class Preprocessing:
                     {date_range_depth[date_range_depth.duplicated()]}''')
         
         elif df_type == 'bbo':
-            date_range_bbo = pd.read_csv(f'{root_caching_folder}{security}/bbo.csv', header=0, index_col=0).index
+            date_range_bbo = pd.read_csv(f'{root_caching_folder}/{security}/bbo.csv', header=0, index_col=0).index
             print(f'''Bbo data already cached:
                     Dataframe size: {date_range_bbo.shape},
                     Start date range: {date_range_bbo.min()}, 
@@ -231,10 +231,10 @@ class Preprocessing:
 # In[3]:
 
 
-root_path = '/Users/federicotampieri/Downloads/' # path where zipped files are stored
+root_path = '/Users/federicotampieri/Downloads' # path where zipped files are stored
 
-root_caching_folder = "/Users/federicotampieri/Downloads/RL_Trader_Caching/" # processed cached data folder
-#security_root_caching_folder = f"{root_caching_folder}{security}/" # individual security folder
+root_caching_folder = "/Users/federicotampieri/Downloads/RL_Trader_Caching" # processed cached data folder
+#security_root_caching_folder = f"{root_caching_folder}/{security}" # individual security folder
 
 security = 'USDT_BTC'
 
@@ -289,8 +289,8 @@ for date in string_dates: #test on a small portion of files
 
 
 #read csv
-depth_df = pd.read_csv(f'{root_caching_folder}{security}/depth.csv', header=0, index_col=0)
-bbo_df = pd.read_csv(f'{root_caching_folder}{security}/bbo.csv', header=0, index_col=0)
+depth_df = pd.read_csv(f'{root_caching_folder}/{security}/depth.csv', header=0, index_col=0)
+bbo_df = pd.read_csv(f'{root_caching_folder}/{security}/bbo.csv', header=0, index_col=0)
 
 
 # In[66]:
