@@ -27,7 +27,7 @@ class Preprocessing:
 
     # method that generates file path
     def file_path(self, date, time):
-        path_string = f"{self.root_path}/{self.security}/{date}/{date.replace('/', '')}_{time}.json.gz"
+        path_string = f'{self.root_path}/{self.security}/{date}/{date.replace("/", "")}_{time}.json.gz'
         return path_string
     
 
@@ -178,7 +178,7 @@ class Preprocessing:
     
         # Create subfolder for security of interest - if it does not exist
         try:
-            os.makedirs(f"{root_caching_folder}/{security}")
+            os.makedirs(f'{root_caching_folder}/{security}')
             print(f'created {root_caching_folder}/{security} subfolder')
         except FileExistsError:
             # directory already exists
