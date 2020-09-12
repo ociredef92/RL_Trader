@@ -38,7 +38,7 @@ class LOBData:
         all_files = []
         for root, subdirs, files in os.walk(f'{self.raw_data_path}/{self.security}'):
             for filename in files:
-                all_files.append(filename)
+                all_files.append(filename) if filename.endswith('.json.gz') else None
         all_files.sort()
 
         first = all_files[0].split('.')[0] # get 20200403_13 from 20200711_14.json.gz
