@@ -80,8 +80,19 @@ class LOBData:
                 print(e)
 
             start_date += timedelta(hours=1)
+        
+        # unravel nested structure and force data types
+        df = pd.DataFrame([y for x in processed_data for y in x], #flatten the list of lists structure
+                          columns = ['Ask_Price', 'Ask_Size', 'Bid_Price', 'Bid_Size','Level', 'Datetime'])
 
-        df = pd.DataFrame(processed_data)
+        df['Ask_Price'] = df['Ask_Price'].astype('float64')
+        df['Ask_Size'] = df['Ask_Size'].astype('float64')
+        df['Bid_Price'] = df['Bid_Price'].astype('float64')
+        df['Bid_Size'] = df['Bid_Size'].astype('float64')
+        df['Level'] = df['Level'].astype('int64')
+        df['Datetime'] = df['Datetime'].astype('string')
+        
+        #df = pd.DataFrame(processed_data)
         df.to_csv(self.cache_file)
 
 #    def resample(self, start_date, end_date):
