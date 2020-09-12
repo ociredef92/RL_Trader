@@ -41,17 +41,16 @@ class LOBData:
                 all_files.append(filename) if filename.endswith('.json.gz') else None
         all_files.sort()
 
-        first = all_files[0].split('.')[0] # get 20200403_13 from 20200711_14.json.gz
+        first = all_files[0].split('.')[0] # get 20200403_13 from 20200403_13.json.gz
         last = all_files[-1].split('.')[0]
-
-        # deliberately calculate all time steps instead of using 'first' and 'last' to check for missing files
         start_date = datetime.strptime(first, '%Y%m%d_%H')
         end_date = datetime.strptime(last, '%Y%m%d_%H')
 
-        # iterate through all time steps between start and end date
         print('Processing raw hourly snapshot files:')
         processed_data = []
 
+        # Loop through all time steps between start and end date instead
+        # of looping through all_files list to check for missing files
         while start_date <= end_date:
             subdir = datetime.strftime(start_date, '%Y/%m/%d')
             filename = datetime.strftime(start_date, '%Y%m%d_%H.json.gz')
@@ -78,6 +77,7 @@ class LOBData:
             except IOError as e:
                 print(e.errno)
                 print(e)
+                # TODO Handle missing files
 
             start_date += timedelta(hours=1)
         
