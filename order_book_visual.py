@@ -23,7 +23,7 @@ from layout import user_interface
 
 import func_tools as ft
 
-root_caching_folder = "" # processed cached data folder
+root_caching_folder = "/Users/federicotampieri/Downloads/RL_Trader_Caching/" # processed cached data folder
 
 # Define app and app layout
 app = dash.Dash(external_stylesheets=[dbc.themes.BOOTSTRAP])
