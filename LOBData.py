@@ -18,7 +18,7 @@ class LOBData:
         self.security = security
         self.frequency = frequency
         self.caching_folder = f'{root_caching_folder}/{security}'
-        self.cache_file = f'{self.caching_folder}/data-cache.csv'
+        self.cache_file = f'{self.caching_folder}/data-cache-1m.csv'
         self.levels = levels
 
         os.makedirs(self.caching_folder, exist_ok=True)
@@ -48,30 +48,20 @@ class LOBData:
             while start_date <= end_date:
                 subdir = datetime.strftime(start_date, '%Y/%m/%d')
                 filename = datetime.strftime(start_date, '%Y%m%d_%H.json.gz')
-                path_string = f'{self.raw_data_path}/{self.security}/{subdir}/{filename}'
-                print(path_string)
+                path = f'{self.raw_data_path}/{self.security}/{subdir}/{filename}'
+                print(path)
+                raw_one_hour_data = self.load_data_file(path)
 
-                try:
-                    # load raw data
-                    with gzip.open(path_string, 'r') as f:  # gzip
-                        json_bytes = f.read()               # bytes
-                    raw_one_hour_data = json.loads(json_bytes.decode('utf-8'))
-
-                    for key in raw_one_hour_data.keys():
-                        # unravel the nested json structure into a more manageable list of lists
-                        processed_data.append(list(zip(
-                            [i[0] for i in raw_one_hour_data.get(key)['asks'][0:self.levels]], # ask px
-                            [i[1] for i in raw_one_hour_data.get(key)['asks'][0:self.levels]], # ask size
-                            [i[0] for i in raw_one_hour_data.get(key)['bids'][0:self.levels]], # bid px
-                            [i[1] for i in raw_one_hour_data.get(key)['bids'][0:self.levels]], # bid size
-                            list(range(self.levels)), # ob level - assuming same for both
-                            [key[-15:]] * self.levels  # datetime part of the key
-                        )))
-
-                except IOError as e:
-                    print(e.errno)
-                    print(e)
-                    # TODO Handle missing files
+                for key in raw_one_hour_data.keys():
+                    # unravel the nested json structure into a more manageable list of lists
+                    processed_data.append(list(zip(
+                        [i[0] for i in raw_one_hour_data.get(key)['asks'][0:self.levels]], # ask px
+                        [i[1] for i in raw_one_hour_data.get(key)['asks'][0:self.levels]], # ask size
+                        [i[0] for i in raw_one_hour_data.get(key)['bids'][0:self.levels]], # bid px
+                        [i[1] for i in raw_one_hour_data.get(key)['bids'][0:self.levels]], # bid size
+                        list(range(self.levels)), # ob level - assuming same for both
+                        [key[-15:]] * self.levels  # datetime part of the key
+                    )))
 
                 start_date += timedelta(hours=1)
             
@@ -84,10 +74,79 @@ class LOBData:
             df['Bid_Price'] = df['Bid_Price'].astype('float64')
             df['Bid_Size'] = df['Bid_Size'].astype('float64')
             df['Level'] = df['Level'].astype('int64')
-            df['Datetime'] = df['Datetime'].astype('str')
-            
-            df.to_csv(self.cache_file)
+            df['Datetime'] = pd.to_datetime(df['Datetime'], format='%Y%m%d_%H%M%S')
+
+            resample_freq = '1min'
+            resampled_data = df.groupby([pd.Grouper(key='Datetime', freq=resample_freq), pd.Grouper(key='Level')]).last().reset_index()
+
+
+            resampled_data.to_csv(self.cache_file)
             return df
+
+    def load_data_file(self, path_string):
+
+        try:
+            # load raw data
+            with gzip.open(path_string, 'r') as f:  # gzip
+                json_bytes = f.read()               # bytes
+                json_string = json_bytes.decode('utf-8')
+            one_hour_data = json.loads(json_string)
+
+        # TODO handle multiple errors in a single file with loop or recursion
+        except json.JSONDecodeError as e:
+            print(f'Malformed JSON in file {path_string} at position {e.pos}')
+            fixed_json_string = self.fix_malformed_json(json_string, e)
+            try: 
+                one_hour_data = json.loads(fixed_json_string)
+
+            except json.JSONDecodeError as e:
+                print(f'Malformed JSON in file {path_string} at position {e.pos}')
+                fixed_json_string = self.fix_malformed_json(fixed_json_string, e)
+                try: 
+                    one_hour_data = json.loads(fixed_json_string)
+
+                except json.JSONDecodeError as e:
+                    print(f'Malformed JSON in file {path_string} at position {e.pos}')
+                    fixed_json_string = self.fix_malformed_json(fixed_json_string, e)
+
+                    one_hour_data = json.loads(fixed_json_string)
+
+
+        except IOError as e:
+            print(e.errno)
+            print(e)
+            # TODO Handle missing files
+
+        except Exception as e:
+            print(e.errno)
+            print(e)
+
+        return one_hour_data
+
+    def fix_malformed_json(self, json_string, e):
+
+        if e.msg == 'Expecting value':
+            # it's malformed like this:
+            # 5634},"BTC_ETH-20200903_095550": ,"BTC_ETH-20200903_095600": {"as
+            
+            prev_snapshot_start = json_string.rindex('{', 0, e.pos)
+            prev_snapshot_end = json_string.rindex('}', 0, e.pos) + 1
+            prev_snapshot = json_string[prev_snapshot_start:prev_snapshot_end]
+            fixed_json_string = json_string[:e.pos] + prev_snapshot + json_string[e.pos:]
+
+        else:
+            # it's malformed like this:
+            # "seq": 933840511}": 933840515},"BTC_ET
+            # "seq": 934014002}4001},"BTC_
+
+            next_comma = json_string.index(',', e.pos)
+            fixed_json_string = json_string[:e.pos] + json_string[next_comma:]
+
+        # zipped = gzip.compress(fixed_json_string.encode('utf-8'))
+        # with open(path_string, 'wb') as archive_file:
+        #     archive_file.write(zipped)
+
+        return fixed_json_string
 
 # TODO add method which returns data with different frequency
 
@@ -98,4 +157,15 @@ security = 'BTC_ETH'
 # instantiate class
 data = LOBData(root_path, security, root_caching_folder)
 df = data.get_LOB_data()
+
 print(df.shape)
+
+#/home/pawel/Documents/LOB-data/new/BTC_ETH/2020/08/25/20200825_08.json
+# path = '/home/pawel/Documents/LOB-data/new/BTC_ETH/2020/08/25/20200507_10.json'
+# with open(path) as data_file:
+#   data = data_file.read()
+#   data_content = json.loads(data)
+
+# zipped = gzip.compress(data.encode('utf-8'))
+# with open(path + '.gz', 'wb') as archive_file:
+#     archive_file.write(zipped)
