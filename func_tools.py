@@ -16,9 +16,10 @@ def normalize(ts, norm_type='z_score', roll=0):
     
     if norm_type=='z_score':
         
-        if ts.shape[1] > 1:
-            ts_stacked = ts.stack()
-        else:
+        try:
+            if ts.shape[1] > 1:
+                ts_stacked = ts.stack()
+        except:
             ts_stacked = ts
         
         return (ts-ts_stacked.mean()) / ts_stacked.std()
