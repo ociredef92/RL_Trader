@@ -117,23 +117,40 @@ controls = dbc.Card(
         ),
 
         html.Hr(),
-        html.H5("Labelling"),
-        dbc.FormGroup(
-            [
+        
+            
+            dbc.FormGroup(
+                [   
+                dbc.Row([
+                    dbc.Col(html.H5("Labelling"), md=4),
+                    dbc.Col(
+                        dcc.RadioItems(
+                            id='label_switch_on',
+                            options=[
+                                {'label': 'On', 'value': 'on'},
+                                {'label': 'Off', 'value': 'off'}
+                            ],
+                            value='off',
+                            labelStyle={'display': 'inline-block'}
+                        ),
+                        md=8)
+                ]
+                ),
 
+                dbc.Label("Long Short Label Strategy"),
                 dcc.RadioItems(
-                    id='label_switch_on',
+                    id='long_only_pnl',
                     options=[
-                        {'label': 'On', 'value': 'on'},
-                        {'label': 'Off', 'value': 'off'}
+                        {'label': 'long only', 'value': 'long'},
+                        {'label': 'long-short', 'value': 'long_short'}
                     ],
-                    value='off',
+                    value='long',
                     labelStyle={'display': 'inline-block'}
                 ),
 
-                dbc.Label("Momentum Window", id='print_mom_window'),
+                dbc.Label("K Plus", id='print_k_plus_window'),
                 dcc.Slider(
-                    id='momentum_window',
+                    id='k_plus',
                     min=0,
                     max=120,
                     step=1,
@@ -148,7 +165,24 @@ controls = dbc.Card(
                             120:{'label': '20h'}
                         }
                 ),
-                #html.P(id='print_mom_window')
+
+                dbc.Label("K Minus", id='print_k_minus_window'),
+                dcc.Slider(
+                    id='k_minus',
+                    min=0,
+                    max=120,
+                    step=1,
+                    value=18,
+                    marks={
+                            0: {'label': '0'},
+                            6: {'label': '1h'},
+                            12: {'label': '2h'},
+                            18: {'label': '3h'},
+                            30: {'label': '5h'},
+                            60: {'label': '10h'},
+                            120:{'label': '20h'}
+                        }
+                ),
             ]
         ),
 
@@ -179,20 +213,9 @@ controls = dbc.Card(
         html.H5("Labels Theoretical P&L"),
         dbc.FormGroup(
             [
-                dbc.Label(hidden=True),
-
-                dcc.RadioItems(
-                    id='ls_pnl',
-                    options=[
-                        {'label': 'long only', 'value': 'long'},
-                        {'label': 'long-short', 'value': 'long_short'}
-                    ],
-                    value='long',
-                    labelStyle={'display': 'inline-block'}
-                ),
-                dbc.Label("Transaction Costs: ", id='print_tr_cost_bps'),
+                dbc.Label("Transaction Costs: ", id='print_tr_fee_bps'),
                 dcc.Slider(
-                    id='tr_costs',
+                    id='tr_fee_bps',
                     min=0,
                     max=100,
                     step=1,
