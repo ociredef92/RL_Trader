@@ -22,7 +22,6 @@ get_ipython().run_line_magic('autoreload', '2')
 
 
 # BTC_ETH form 4 April till 1 Sept - downloaded locally
-#cache_file = 'https://aws-sam-cli-managed-default-samclisourcebucket-1fti72g7fv2bu.s3.eu-west-2.amazonaws.com/data-cache-1m.csv'
 
 cached_data = pd.read_csv('/Users/federicotampieri/Downloads/RL_Trader_Caching/BTC_ETH_1m/data-cache-1m.csv', 
                           index_col=0)
