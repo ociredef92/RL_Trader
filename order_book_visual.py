@@ -33,9 +33,10 @@ app.layout = user_interface
 
 @app.callback(
     [Output("price_chart", "figure"),
-    Output("print_mom_window", "children"),
+    Output("print_k_plus_window", "children"),
+    Output("print_k_minus_window", "children"),
     Output("print_alpha_threshold", "children"),
-    Output("print_tr_cost_bps", "children")
+    Output("print_tr_fee_bps", "children")
     ]
     ,
     [
@@ -47,18 +48,21 @@ app.layout = user_interface
         Input("normalization_type", "value"),
         Input("normalization_window", "value"),
         Input("label_switch_on", "value"),
-        Input("momentum_window", "value"),
+        Input("k_plus", "value"),
+        Input("k_minus", "value"),
         Input("alpha_threshold", "value"),
-        Input("tr_costs", "value"),
-        Input("ls_pnl", "value")
+        Input("tr_fee_bps", "value"),
+        Input("long_only_pnl", "value")
     ],
 )
-def make_price_graph(security, start_date, end_date, norm_type, norm_window, switch, k, alpha, tr_costs, pnl):
+def make_price_graph(security, start_date, end_date, norm_type, norm_window, switch, 
+                        k_plus, k_minus, alpha, tr_fee_bps, long_only):
 
     # initiate values to print out under dash components
-    mom_window_text = ''
+    k_plus_window_text = ''
+    k_minus_window_text = ''
     alpha_thresh_text = ''
-    tr_costs_text = ''
+    tr_fee_text = ''
     
     # data reading
     bbo_df = pd.read_csv(f'{root_caching_folder}{security}/bbo.csv', header=0, index_col=0)
@@ -106,30 +110,32 @@ def make_price_graph(security, start_date, end_date, norm_type, norm_window, swi
         px_chart.update_yaxes(title_text="normalized price", secondary_y=sec_axis_check, row=1, col=1)
 
     if switch == 'on':
-        
-        labels = ft.get_labels(bbo_filtered['mid_mean'], k, alpha) #getting labels from real px
-        background_color = ft.plot_labels(labels)
-        px_chart.update_layout(shapes=background_color) # plot labels background
 
         # If labelling is on plot theoretical pnl
-        if pnl == 'long':
-            pnl = ft.get_pnl(bbo_filtered['mid_mean'], labels, long_only=True)
+        if long_only == 'long':
+
+            labels = ft.get_labels(bbo_filtered['mid_mean'], k_plus, k_minus,  alpha, long_only=True) #getting labels from real px
+            pnl, _ = ft.get_pnl(bbo_filtered['mid_mean'], labels, tr_fee_bps/10000)
             px_chart.add_trace(go.Scatter(x=pnl.index, y=pnl, name='PnL'), row=2, col=1)
 
-        elif pnl == 'long_short':
-            pnl = ft.get_pnl(bbo_filtered['mid_mean'], labels, long_only=False)
+        elif long_only == 'long_short':
+            labels = ft.get_labels(bbo_filtered['mid_mean'], k_plus, k_minus,  alpha, long_only=False) #getting labels from real px
+            pnl, _ = ft.get_pnl(bbo_filtered['mid_mean'], labels, tr_fee_bps/10000)
             px_chart.add_trace(go.Scatter(x=pnl.index, y=pnl, name='PnL'), row=2, col=1)
 
+        background_color = ft.plot_labels(labels)
+        px_chart.update_layout(shapes=background_color) # plot labels background
     else:
         # add flat line
         px_chart.add_trace(go.Scatter(x=bbo_filtered.index, y=np.zeros(bbo_filtered.index.shape[0]), name='PnL'), row=2, col=1)
 
     # print out labelling paramenters
-    mom_window_text = f'Momentum Window: {k} steps'
+    k_plus_text = f'k Plus Window: {k_plus} steps'
+    k_minus_text = f'k Minus Window: {k_minus} steps'
     alpha_thresh_text = f'Alpha Threshold: {alpha*100:.3f}%'
 
     # print out transaction cost assumption
-    tr_costs_text = f'Transaction Costs: {tr_costs}bps'
+    tr_fee_text = f'Transaction Costs: {tr_fee_bps}bps'
 
     px_chart.update_layout(
                 height=600,
@@ -148,7 +154,7 @@ def make_price_graph(security, start_date, end_date, norm_type, norm_window, swi
             )
     #px_chart.update_xaxes(rangeslider_visible=True)
 
-    return px_chart, mom_window_text, alpha_thresh_text, tr_costs_text
+    return px_chart, k_plus_text, k_minus_text, alpha_thresh_text, tr_fee_text
 
 # Deactivate normalization slider when dyn_z_score is not selected
 @app.callback(Output('normalization_window', 'disabled'),
@@ -162,14 +168,15 @@ def disable_norm(value_list):
 
 # Deactivate labelling parameters if switch is "off"
 @app.callback([
-            Output('momentum_window', 'disabled'),
+            Output('k_plus', 'disabled'),
+            Output('k_minus', 'disabled'),
             Output('alpha_threshold', 'disabled')],
             [Input('label_switch_on', 'value')] )
 def disable_label(switch):
     if switch == 'off':
-        return True, True
+        return True, True, True
     else:
-        return False, False
+        return False, False, False
 
 
 @app.callback(
