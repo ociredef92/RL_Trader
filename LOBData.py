@@ -34,7 +34,7 @@ class LOBData:
                 for filename in files:
                     all_files.append(filename) if filename.endswith('.json.gz') else None
             all_files.sort()
-
+            print(all_files)
             first = all_files[0].split('.')[0] # get 20200403_13 from 20200403_13.json.gz
             last = all_files[-1].split('.')[0]
             start_date = datetime.strptime(first, '%Y%m%d_%H')
@@ -150,15 +150,15 @@ class LOBData:
 
 # TODO add method which returns data with different frequency
 
-root_path = '/home/pawel/Documents/LOB-data/new' # path where zipped files are stored
-root_caching_folder = '/home/pawel/Documents/LOB-data/cache' # processed cached data folder
-security = 'BTC_ETH'
+# root_path = '/home/pawel/Documents/LOB-data/new' # path where zipped files are stored
+# root_caching_folder = '/home/pawel/Documents/LOB-data/cache' # processed cached data folder
+# security = 'BTC_ETH'
 
-# instantiate class
-data = LOBData(root_path, security, root_caching_folder)
-df = data.get_LOB_data()
+# # instantiate class
+# data = LOBData(root_path, security, root_caching_folder)
+# df = data.get_LOB_data()
 
-print(df.shape)
+# print(df.shape)
 
 #/home/pawel/Documents/LOB-data/new/BTC_ETH/2020/08/25/20200825_08.json
 # path = '/home/pawel/Documents/LOB-data/new/BTC_ETH/2020/08/25/20200507_10.json'

@@ -2,12 +2,12 @@ import numpy as np
 import pandas as pd
 
 
-def normalize(ts, norm_type='z_score', roll=0):
+def normalize(ts, ob_levels, norm_type='z_score', roll=0):
     '''
     Function to normalize timeseries
 
     Arguments:
-    ts -- pandas series or array
+    ts -- pandas series or df having timestamp and ob level as index to allow sorting (dynamic z score)
     norm_type -- string, can assume values of 'z' or 'dyn' for z-score or dynamic z-score
     roll -- integer, rolling window for dyanamic normalization.
 
@@ -25,12 +25,21 @@ def normalize(ts, norm_type='z_score', roll=0):
         return (ts-ts_stacked.mean()) / ts_stacked.std()
     
     # dynamic can't accomodate multi columns normalization yet
-    elif norm_type=='dyn_z_score' and type(roll) is int and roll>0:
-        return (ts - ts.rolling(roll).mean().shift(1) 
-              ) / ts.rolling(roll).std(ddof=0).shift(1)
+    elif norm_type=='dyn_z_score' and roll>0:
 
-    raise ValueError("Oops! Check your inputs and Try again...")
+        ts_shape = ts.shape[1]
 
+        if ts_shape > 1:
+            ts_stacked = ts.stack()
+
+            print(f'rolling window = {roll * ob_levels * ts_shape}, calculate as roll: {roll} * levels: {ob_levels} * shape[1]: {ts_shape}')
+
+            ts_dyn_z = (ts_stacked - ts_stacked.rolling(roll * ob_levels * ts_shape).mean().shift((ob_levels * ts_shape) + 1) 
+              ) / ts_stacked.rolling(roll * ob_levels * ts_shape).std(ddof=0).shift((ob_levels * ts_shape) + 1)
+
+            return ts_dyn_z.reset_index().pivot_table(index=['Datetime', 'Level'], columns='level_2', values=0, dropna=True)
+    else:
+        print('Normalization not perfmed, please check your code')
 
 def get_labels(ts, k_plus, k_minus, alpha, long_only=True):
     '''
@@ -50,7 +59,11 @@ def get_labels(ts, k_plus, k_minus, alpha, long_only=True):
     m_plus = ts.shift(-k_plus).rolling(k_plus).mean() # # mean next k prices
 
     # direction of price movements at time t
-    direction = (m_plus - m_minus) / m_minus
+    #direction = (m_plus - m_minus) / m_minus
+
+    direction_pos = (m_plus - m_minus) / m_minus
+    direction_neg = (m_minus - m_plus) / m_plus
+    direction = pd.Series(np.where(ts>=0, direction_pos, direction_neg)) # flip when ts is neg
 
     if long_only:
         # assign labels based on alpha threshold
@@ -114,14 +127,14 @@ def cnn_data_reshaping(X, Y, T):
     for i in range(T, N + 1):
         dataX[i - T] = df[i - T:i, :]
 
-    dataX = dataX.reshape(dataX.shape)# + (1,)) # no need to add the extra dimension for 1d conv
+    dataX = dataX.reshape(dataX.shape + (1,)) # no need to add the extra dimension for 1d conv
 
     print(f'shape X:{dataX.shape}, shape Y:{dataY.shape}')
 
     return dataX, dataY
 
 
-def plot_labels(labels):
+def plot_labels(labels, y0=0.46):
 
     label_change = labels - labels.shift(1)
     label_change = label_change[label_change!=0]
@@ -133,7 +146,7 @@ def plot_labels(labels):
                             # y-reference is assigned to the plot paper [0,1]
                             yref="paper",
                             x0=label_change.index[i],
-                            y0=0.44,
+                            y0=y0,
                             x1=label_change.index[i+1],
                             y1=1,
                             fillcolor="Red",
@@ -153,7 +166,7 @@ def plot_labels(labels):
                                     # y-reference is assigned to the plot paper [0,1]
                                     yref="paper",
                                     x0=label_change.index[i],
-                                    y0=0.44,
+                                    y0=y0,
                                     x1=label_change.index[i+1],
                                     y1=1,
                                     fillcolor="Green",
@@ -173,7 +186,7 @@ def plot_labels(labels):
                                             # y-reference is assigned to the plot paper [0,1]
                                             yref="paper",
                                             x0=label_change.index[i],
-                                            y0=0.44,
+                                            y0=y0,
                                             x1=label_change.index[i+1],
                                             y1=1,
                                             fillcolor="#E5ECF6", # default plotly background
@@ -187,7 +200,51 @@ def plot_labels(labels):
     ]
     return background_color
 
+# Get data in the desired format - similar to deep lob
+# Steps: pivot data, transpose and reset index (easier to sort than columns),
+# sort by order book level and then event type in order to have at each level
+# ask_price, ask_size, bid_price, bid_size. Finally reset the index back and transpose
 
+def reshape_lob_levels(z_df, output_type='array'):
+    reshaped_z_df = z_df.pivot(index='Datetime', 
+                          columns='Level', 
+                          values=['Ask_Price', 'Ask_Size', 'Bid_Price', 'Bid_Size']).T.reset_index()\
+                          .sort_values(by=['Level', 'level_0'], ascending=[True, True])\
+                          .set_index(['Level', 'level_0']).T
+
+    dt_index = reshaped_z_df.index
+
+    print(f'Depth Values shape: {reshaped_z_df.shape}')
+    print(f'Datetime Index shape: {dt_index.shape}')
+
+    if output_type == 'dataframe':
+
+        return reshaped_z_df, dt_index
+        
+    elif output_type == 'array':
+
+        depth_values = reshaped_z_df.values # numpy array ready to be used as input for cnn_data_reshaping
+        return depth_values, dt_index
+  
+
+def label_insights(labels):
+    '''
+    Take a np.array of labels as an input and return
+    insights into number of labels, transactions, imbalance
+    labels has to be one dimentional ie: (labels.shape, )
+    '''
+
+      # get for how long labels are "in the market"
+    unique_labels, counts_labels = np.unique(labels, return_counts=True)
+    percent_labels = counts_labels / counts_labels.sum()
+    a_ext = np.concatenate(( [0], labels.values, [0])) # extend array for comparison
+    idx = np.flatnonzero(a_ext[1:] != a_ext[:-1]) # non zero indices - transactions
+
+    print(f'Labels shape: {labels.shape}')
+    print(f'Labels: {unique_labels} \nCount: {counts_labels} \nPctg: {percent_labels}')
+    print(f'Number of total transaction: {idx.shape[0]}')
+
+    return idx.shape[0]
 
 
 
