@@ -9,22 +9,23 @@ import pandas as pd
 class LOBData:
 
     # initialize class attributes: root_path is the root folder, security is the currency pair to unpack
-    def __init__(self, raw_data_path, security, root_caching_folder, frequency = timedelta(seconds=10), levels=10):
+    def __init__(self, raw_data_path, security, root_caching_folder, frequency = timedelta(seconds=10), levels=10, resampled_cache=None):
 
         assert frequency >= timedelta(seconds=10), 'Frequency must be greater than 10 seconds'
 
         self.raw_data_path = raw_data_path
         self.security = security
         self.frequency = frequency
+        self.resampled_cache = resampled_cache
         self.caching_folder = f'{root_caching_folder}/{security}'
-        self.cache_file = f'{self.caching_folder}/test-data-cache-1m.csv'
+        self.cache_file = f'{self.caching_folder}/test-data-cache'
         self.levels = levels
 
         os.makedirs(self.caching_folder, exist_ok=True)
 
     def get_LOB_data(self): # TODO consider returning date rage
 
-        if os.path.isfile(self.cache_file):
+        if os.path.isfile(self.cache_file): # change this to accomodate what has already been cached
             return pd.read_csv(self.cache_file)
 
         else:
@@ -61,6 +62,7 @@ class LOBData:
                             [i[0] for i in raw_data.get(key)['bids'][0:self.levels]], # bid px
                             [i[1] for i in raw_data.get(key)['bids'][0:self.levels]], # bid size
                             list(range(self.levels)), # ob level - assuming same for both
+                            [raw_data.get(key)['seq']] * self.levels,
                             [key[-15:]] * self.levels  # datetime part of the key
                         )))
                 # TODO sort datetime keys and cache one day as csv?
@@ -70,20 +72,28 @@ class LOBData:
 
             # unravel nested structure and force data types
             df = pd.DataFrame([y for x in processed_data for y in x], #flatten the list of lists structure
-                            columns = ['Ask_Price', 'Ask_Size', 'Bid_Price', 'Bid_Size','Level', 'Datetime'])
+                            columns = ['Ask_Price', 'Ask_Size', 'Bid_Price', 'Bid_Size','Level', 'Sequence','Datetime'])
 
             df['Ask_Price'] = df['Ask_Price'].astype('float64')
             df['Ask_Size'] = df['Ask_Size'].astype('float64')
             df['Bid_Price'] = df['Bid_Price'].astype('float64')
             df['Bid_Size'] = df['Bid_Size'].astype('float64')
             df['Level'] = df['Level'].astype('int64')
+            df['Sequence'] = df['Sequence'].astype('int64')
             df['Datetime'] = pd.to_datetime(df['Datetime'], format='%Y%m%d_%H%M%S')
 
-            resample_freq = '1min'
-            resampled_data = df.groupby([pd.Grouper(key='Datetime', freq=resample_freq), pd.Grouper(key='Level')]).last().reset_index()
+            if self.resampled_cache != None:
+                # resample dataframe to the wanted frequency
+                resampled_data = df.groupby([pd.Grouper(key='Datetime', freq=self.resampled_cache), pd.Grouper(key='Level')]).last().reset_index()
+                # split resampled dataframe daily - group[0] -> date - group[1] -> dataframe
+                df_partitions = [group for group in resampled_data.groupby([resampled_data.Datetime.dt.year, resampled_data.Datetime.dt.month, resampled_data.Datetime.dt.day])]
 
+                for group in df_partitions:
+                    partition_date = '-'.join([str(x) for x in group[0]])
+                    group[1].to_csv(f'{self.cache_file}_{self.resampled_cache}_{partition_date}.csv')
 
-            resampled_data.to_csv(self.cache_file)
+            
+            df.to_csv(f'{self.caching_folder}/original_frequency.csv.gz', compression='gzip')
             return df
 
     def load_data_file(self, path):
@@ -149,12 +159,12 @@ class LOBData:
 
 # TODO add method which returns data with different frequency
 
-root_path = '/home/pawel/Documents/LOB-data/new-format-test' # path where zipped files are stored
-root_caching_folder = '/home/pawel/Documents/LOB-data/cache' # processed cached data folder
-security = 'BNB_BTC'
+# root_path = '/home/pawel/Documents/LOB-data/new-format-test' # path where zipped files are stored
+# root_caching_folder = '/home/pawel/Documents/LOB-data/cache' # processed cached data folder
+# security = 'BNB_BTC'
 
-# instantiate class
-data = LOBData(root_path, security, root_caching_folder)
-df = data.get_LOB_data()
+# # instantiate class
+# data = LOBData(root_path, security, root_caching_folder)
+# df = data.get_LOB_data()
 
-print(df.shape)
+# print(df.shape)
