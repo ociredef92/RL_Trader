@@ -37,8 +37,9 @@ class LOBData:
             print(all_files)
             first = all_files[0].split('.')[0] # get 20200403_13 from 20200403_13.json.gz
             last = all_files[-1].split('.')[0]
-            start_date = datetime.strptime(first, '%Y%m%d_%H')
-            end_date = datetime.strptime(last, '%Y%m%d_%H')
+            print(first, last)
+            start_date = datetime.strptime(first, '%Y%m%d_%H-%M-%S')
+            end_date = datetime.strptime(last, '%Y%m%d_%H-%M-%S')
 
             print('Processing raw hourly snapshot files:')
             processed_data = []

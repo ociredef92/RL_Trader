@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 
-def normalize(ts, ob_levels, norm_type='z_score', roll=0):
+def normalize(ts, ob_levels,norm_type='z_score', roll=0):
     '''
     Function to normalize timeseries
 
@@ -36,8 +36,11 @@ def normalize(ts, ob_levels, norm_type='z_score', roll=0):
 
             ts_dyn_z = (ts_stacked - ts_stacked.rolling(roll * ob_levels * ts_shape).mean().shift((ob_levels * ts_shape) + 1) 
               ) / ts_stacked.rolling(roll * ob_levels * ts_shape).std(ddof=0).shift((ob_levels * ts_shape) + 1)
-
-            return ts_dyn_z.reset_index().pivot_table(index=['Datetime', 'Level'], columns='level_2', values=0, dropna=True)
+            
+            norm_df = ts_dyn_z.reset_index().pivot_table(index=['Datetime', 'Level'], columns='level_2', values=0, dropna=True)
+            print('done')
+            #Q.put(norm_df)
+            return norm_df
     else:
         print('Normalization not perfmed, please check your code')
 
@@ -92,15 +95,19 @@ def get_pnl(px_ts, labels, trading_fee=0.000712):
     df.columns=['px', 'labels']
     
     labels_ext = np.concatenate(( [0], labels.values, [0])) # extend array for comparison
-    idx = np.flatnonzero(labels_ext[1:] != labels_ext[:-1]) # non zero indices
+    idx = np.flatnonzero(labels_ext[1:] != labels_ext[:-1])
     #print(idx.shape[0]) # how many transactions
-    
+    if idx[-1] >= df.shape[0]:
+        idx = idx[:-1] # non zero indices - remove last. Avoid errors when transaction occurs on last label
+
+
     tr_fees = np.ones((labels.shape[0]))
     tr_fees[idx] = 1 - trading_fee
 
     df['return'] = df['px'].pct_change()
+    df['realized_return'] = df['return'] * df['labels']
 
-    return ((df['labels'] * df['return'] * tr_fees) + 1).cumprod() - 1, idx # labels and label change index
+    return ((df['labels'] * df['return'] * tr_fees) + 1).cumprod() - 1, df, idx # labels and label change index
 
 
 
