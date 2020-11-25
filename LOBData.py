@@ -41,59 +41,60 @@ class LOBData:
             end_date = datetime.strptime(last, '%Y%m%d_%H')
 
             print(f'Processing data from {start_date} to {end_date}')
-            processed_data = []
+            
 
             # Loop through day directories
             date_to_process = start_date
             while date_to_process <= end_date:
                 day_folder = datetime.strftime(date_to_process, '%Y/%m/%d')
+                
                 # TODO - cache one day with per levels depth and read from cache if already processed
 
+                # empty json and nested list every new day processed
+                raw_data = {} # empty dict to update with incoming json
+                processed_data = []
                 for filename in os.listdir(f'{self.raw_data_path}/{self.security}/{day_folder}'):
                     print(f'Reading {self.security}/{filename}')
-                    raw_data = self.load_data_file(f'{self.raw_data_path}/{self.security}/{day_folder}/{filename}')
+                    raw_data_temp = self.load_data_file(f'{self.raw_data_path}/{self.security}/{day_folder}/{filename}')
 
+                    raw_data.update(raw_data_temp)
                     # TODO - datetime as keys to sort later
-                    for key in raw_data.keys():
-                        # unravel the nested json structure into a more manageable list of lists
-                        processed_data.append(list(zip(
-                            [i[0] for i in raw_data.get(key)['asks'][0:self.levels]], # ask px
-                            [i[1] for i in raw_data.get(key)['asks'][0:self.levels]], # ask size
-                            [i[0] for i in raw_data.get(key)['bids'][0:self.levels]], # bid px
-                            [i[1] for i in raw_data.get(key)['bids'][0:self.levels]], # bid size
-                            list(range(self.levels)), # ob level - assuming same for both
-                            [raw_data.get(key)['seq']] * self.levels,
-                            [key[-15:]] * self.levels  # datetime part of the key
-                        )))
+                for key in sorted(raw_data.keys()):
+                    # unravel the nested json structure into a more manageable list of lists
+                    processed_data.append(list(zip(
+                        [i[0] for i in raw_data.get(key)['asks'][0:self.levels]], # ask px
+                        [i[1] for i in raw_data.get(key)['asks'][0:self.levels]], # ask size
+                        [i[0] for i in raw_data.get(key)['bids'][0:self.levels]], # bid px
+                        [i[1] for i in raw_data.get(key)['bids'][0:self.levels]], # bid size
+                        list(range(self.levels)), # ob level - assuming same for both
+                        [raw_data.get(key)['seq']] * self.levels,
+                        [key[-15:]] * self.levels  # datetime part of the key
+                    )))
                 # TODO sort datetime keys and cache one day as csv?
 
-                date_to_process += timedelta(days=1) # the most nested folder is a day of the month
+                # unravel nested structure and force data types
+                df = pd.DataFrame([y for x in processed_data for y in x], #flatten the list of lists structure
+                                columns = ['Ask_Price', 'Ask_Size', 'Bid_Price', 'Bid_Size','Level', 'Sequence','Datetime'])
+
+                df['Ask_Price'] = df['Ask_Price'].astype('float64')
+                df['Ask_Size'] = df['Ask_Size'].astype('float64')
+                df['Bid_Price'] = df['Bid_Price'].astype('float64')
+                df['Bid_Size'] = df['Bid_Size'].astype('float64')
+                df['Level'] = df['Level'].astype('int64')
+                df['Sequence'] = df['Sequence'].astype('int64')
+                df['Datetime'] = pd.to_datetime(df['Datetime'], format='%Y%m%d_%H%M%S')
+                
+                df.to_csv(f'{self.caching_folder}/{datetime.strftime(date_to_process, "%Y-%m-%d")}-original_frequency.csv.gz', compression='gzip')
+
+                # cache as risampled
+                if self.resampled_cache != None:
+                    # resample dataframe to the wanted frequency
+                    resampled_data = df.groupby([pd.Grouper(key='Datetime', freq=self.resampled_cache), pd.Grouper(key='Level')]).last().reset_index()
+                    resampled_data.to_csv(f'{self.cache_file}_{self.resampled_cache}_{datetime.strftime(date_to_process, "%Y-%m-%d")}.csv')
+                
+                date_to_process += timedelta(days=1) # the most nested folder is a day of the month 
             
-
-            # unravel nested structure and force data types
-            df = pd.DataFrame([y for x in processed_data for y in x], #flatten the list of lists structure
-                            columns = ['Ask_Price', 'Ask_Size', 'Bid_Price', 'Bid_Size','Level', 'Sequence','Datetime'])
-
-            df['Ask_Price'] = df['Ask_Price'].astype('float64')
-            df['Ask_Size'] = df['Ask_Size'].astype('float64')
-            df['Bid_Price'] = df['Bid_Price'].astype('float64')
-            df['Bid_Size'] = df['Bid_Size'].astype('float64')
-            df['Level'] = df['Level'].astype('int64')
-            df['Sequence'] = df['Sequence'].astype('int64')
-            df['Datetime'] = pd.to_datetime(df['Datetime'], format='%Y%m%d_%H%M%S')
-
-            if self.resampled_cache != None:
-                # resample dataframe to the wanted frequency
-                resampled_data = df.groupby([pd.Grouper(key='Datetime', freq=self.resampled_cache), pd.Grouper(key='Level')]).last().reset_index()
-                # split resampled dataframe daily - group[0] -> date - group[1] -> dataframe
-                df_partitions = [group for group in resampled_data.groupby([resampled_data.Datetime.dt.year, resampled_data.Datetime.dt.month, resampled_data.Datetime.dt.day])]
-
-                for group in df_partitions:
-                    partition_date = '-'.join([str(x) for x in group[0]])
-                    group[1].to_csv(f'{self.cache_file}_{self.resampled_cache}_{partition_date}.csv')
-
-            
-            df.to_csv(f'{self.caching_folder}/original_frequency.csv.gz', compression='gzip')
+            #probably we do not need to return anything here
             return df
 
     def load_data_file(self, path):
