@@ -106,6 +106,8 @@ def get_pnl(px_ts, labels, trading_fee=0.000712):
 
     df['return'] = df['px'].pct_change()
     df['realized_return'] = df['return'] * df['labels']
+    df['trade_flag'] = df.index.isin(idx)
+    df['pnl'] = ((df['labels'] * df['return'] * tr_fees) + 1).cumprod()
 
     return ((df['labels'] * df['return'] * tr_fees) + 1).cumprod() - 1, df, idx # labels and label change index
 
