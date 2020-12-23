@@ -1,3 +1,6 @@
+import numpy as np
+import pandas as pd
+
 class DataNormalization:
 
     def __init__(self, ts, roll, ob_levels, start):
@@ -18,13 +21,15 @@ class DataNormalization:
             return ts_stacked
 
     def get_new_data(self):
-        self.new_data = self.ts_stacked.iloc[(self.start+self.roll_window):(self.start+self.roll_window+self.roll_step)]
         self.start += self.roll_step
+        self.new_data = self.ts_stacked.iloc[(self.start+self.roll_window):(self.start+self.roll_window+self.roll_step)]
         return self.new_data
 
     def dyn_z(self):
-        mean_rw = np.mean(self.ts_stacked.iloc[0:self.roll_window])
-        std_rw = np.std(self.ts_stacked.iloc[0:self.roll_window])
+        mean_rw = np.mean(self.ts_stacked.iloc[self.start:self.roll_window+self.start])
+        std_rw = np.std(self.ts_stacked.iloc[self.start:self.roll_window+self.start])
         self.new_data = self.get_new_data()
+        print(self.ts_stacked.iloc[self.start:self.roll_window+self.start])
         print(self.new_data)
-        
+        z_rw = (self.new_data - mean_rw) / std_rw
+        return z_rw
