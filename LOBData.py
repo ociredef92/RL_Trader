@@ -3,6 +3,7 @@ import json
 import os
 
 from datetime import datetime, timedelta
+from typing import Sequence
 
 import pandas as pd
 import dask.dataframe as dd
@@ -34,24 +35,24 @@ class LOBData:
         # set end tate to the end of the previous to last day in order to avoid incomplete days when adding new data
         self.end_date = datetime.strptime(last, '%Y%m%d_%H').replace(hour=23) - timedelta(1)
 
-        os.makedirs(f'{self.caching_folder}/{int(self.frequency.total_seconds())}-seconds', exist_ok=True)
+        os.makedirs(f'{self.caching_folder}/{int(self.frequency.total_seconds())}s', exist_ok=True)
         os.makedirs(f'{self.caching_folder}/original_frequency', exist_ok=True)
 
     def get_data(self): # TODO consider returning date rage
-        file_names = self.transform_and_resample()
-        return dd.read_csv(file_names, compression='gzip')
+        self.transform_and_resample()
+        resampled_csv_files = f'{self.caching_folder}/{int(self.frequency.total_seconds())}s/*.csv.gz'
+        return dd.read_csv(resampled_csv_files, compression='gzip')
 
     def transform_and_resample(self): # TODO consider returning date rage
         print(f'Checking for cached data from {self.start_date} to {self.end_date}')
-        file_names = []
 
         # Loop through day directories
         date_to_process = self.start_date
         while date_to_process <= self.end_date:
             day_folder = datetime.strftime(date_to_process, '%Y/%m/%d')
             day_cache_file_name = f'{datetime.strftime(date_to_process, "%Y-%m-%d")}.csv.gz'
-
-            resampled_file_name = f'{self.caching_folder}/{int(self.frequency.total_seconds())}-seconds/{day_cache_file_name}'
+            freq = f'{int(self.frequency.total_seconds())}s'
+            resampled_file_name = f'{self.caching_folder}/{freq}/{day_cache_file_name}'
             if os.path.isfile(resampled_file_name):
                 print(f'Found {resampled_file_name}')
             else:
@@ -59,54 +60,73 @@ class LOBData:
                 original_file_name = f'{self.caching_folder}/original_frequency/{day_cache_file_name}'
                 if os.path.isfile(original_file_name):
                     day_data = pd.read_csv(original_file_name, parse_dates=['Datetime'])
-                    # convert datetime - this is different than other conversion at the end of else clause
-                    #day_data['Datetime'] = pd.to_datetime(day_data['Datetime'], format='%Y-%m-%d %H:%M:%S')
                 else:
                     # empty json and nested list every new day processed
                     raw_data = {} # empty dict to update with incoming json
                     processed_data = []
+
+                    # Load all files in to a dictionary
                     for filename in os.listdir(f'{self.raw_data_path}/{self.security}/{day_folder}'):
-                        print(f'Reading {self.security}/{filename}')
+                        #print(f'Reading {self.security}/{filename}')
                         raw_data_temp = self.load_data_file(f'{self.raw_data_path}/{self.security}/{day_folder}/{filename}')
 
                         raw_data.update(raw_data_temp)
-                        # TODO - datetime as keys to sort later
-                    for key in sorted(raw_data.keys()):
-                        # unravel the nested json structure into a more manageable list of lists
+
+                    # number of seconds in a day / frequencey in seconds
+                    snapshot_count_day = int(24 * 60 * 60 / self.frequency.total_seconds())
+                    if len(raw_data) != snapshot_count_day:
+                        print(f'{snapshot_count_day - len(raw_data)} gaps in {original_file_name}')
+
+                    #del(raw_data['BTC_XRP-20200404_000000'])
+
+                    #TODO fix sequence order frequency
+
+                    raw_data_frame = pd.DataFrame.from_dict(raw_data, orient='index')
+                    raw_data_frame.reset_index(inplace=True)
+                    raw_data_frame['index'] = raw_data_frame['index'].str[-15:]
+                    raw_data_frame['index'] = pd.to_datetime(raw_data_frame['index'], format='%Y%m%d_%H%M%S')
+                    raw_data_frame.set_index('index',drop=True,inplace=True)
+                    raw_data_frame.sort_index(inplace=True)
+                    idx_start = date_to_process
+                    idx_end = date_to_process + timedelta(days=1)
+                    idx = pd.date_range(idx_start, idx_end, freq=freq)
+                    raw_data_frame = raw_data_frame.reindex(idx).ffill().fillna(method='bfill') # forward fill gaps and back fill first item if missing
+
+                    # Convert hierarchical json data in to tabular format
+                    levels = list(range(self.levels))
+                    for row in raw_data_frame.itertuples():
+                        ask_price, ask_volume = zip(* row.asks[0:self.levels])
+                        bid_price, bid_volume = zip(* row.bids[0:self.levels])
+                        sequences = [row.seq] * self.levels
+                        datetimes = [row.Index] * self.levels
+
                         processed_data.append(list(zip(
-                            [i[0] for i in raw_data.get(key)['asks'][0:self.levels]], # ask px
-                            [i[1] for i in raw_data.get(key)['asks'][0:self.levels]], # ask size
-                            [i[0] for i in raw_data.get(key)['bids'][0:self.levels]], # bid px
-                            [i[1] for i in raw_data.get(key)['bids'][0:self.levels]], # bid size
-                            list(range(self.levels)), # ob level - assuming same for both
-                            [raw_data.get(key)['seq']] * self.levels,
-                            [key[-15:]] * self.levels  # datetime part of the key
+                            ask_price,
+                            ask_volume,
+                            bid_price,
+                            bid_volume,
+                            levels,
+                            sequences,
+                            datetimes
                         )))
-                    # TODO sort datetime keys and cache one day as csv?
 
                     # unravel nested structure and force data types
                     day_data = pd.DataFrame([y for x in processed_data for y in x], #flatten the list of lists structure
                                     columns = ['Ask_Price', 'Ask_Size', 'Bid_Price', 'Bid_Size','Level', 'Sequence','Datetime'])
 
                     day_data['Ask_Price'] = day_data['Ask_Price'].astype('float64')
-                    day_data['Ask_Size'] = day_data['Ask_Size'].astype('float64')
                     day_data['Bid_Price'] = day_data['Bid_Price'].astype('float64')
-                    day_data['Bid_Size'] = day_data['Bid_Size'].astype('float64')
-                    day_data['Level'] = day_data['Level'].astype('int64')
                     day_data['Sequence'] = day_data['Sequence'].astype('int64')
-                    day_data['Datetime'] = pd.to_datetime(day_data['Datetime'], format='%Y%m%d_%H%M%S')
 
                     day_data.to_csv(original_file_name, compression='gzip')
 
                 # resample dataframe to the wanted frequency
-                freq = f'{int(self.frequency.total_seconds())}s'
                 resampled_day_data = day_data.groupby([pd.Grouper(key='Datetime', freq=freq), pd.Grouper(key='Level')]).last().reset_index()
                 resampled_day_data.to_csv(resampled_file_name, compression='gzip')
 
-            file_names.append(resampled_file_name)
             date_to_process += timedelta(days=1) # the most nested folder is a day of the month 
 
-        return file_names
+        return
 
     def load_data_file(self, path):
         try:
@@ -171,11 +191,11 @@ class LOBData:
 
 # TODO add method which returns data with different frequency
 
-root_path = '/home/pawel/Documents/LOB-data/mixed' # path where zipped files are stored
+root_path = '/home/pawel/Documents/LOB-data/new-format' # path where zipped files are stored
 root_caching_folder = '/home/pawel/Documents/LOB-data/cache' # processed cached data folder
 security = 'BTC_ETH'
 
-data = LOBData(root_path, security, root_caching_folder, timedelta(seconds=10))
+data = LOBData(root_path, security, root_caching_folder, timedelta(seconds=1))
 df = data.get_data()
 print('DataFrame loaded')
 # computed = df.compute()
@@ -183,7 +203,8 @@ print('DataFrame loaded')
 # print(computed.head())
 # print(computed.tail())
 
-#df = df.repartition(npartitions=1)
+
+# df = df.repartition(npartitions=1)
 
 start_date = datetime.strftime(data.start_date, '%Y_%m_%d')
 end_date = datetime.strftime(data.end_date, '%Y_%m_%d')
