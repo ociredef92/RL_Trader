@@ -31,16 +31,16 @@ class LOBData:
         first = all_files[0].split('.')[0].split('-')[0] # get 20200403_13 from 20200403_13.json.gz or 20200403_13-1-2.json.gz
         last = all_files[-1].split('.')[0].split('-')[0]
 
-        self.start_date = datetime.strptime(first, '%Y%m%d_%H')
-        # set end tate to the end of the previous to last day in order to avoid incomplete days when adding new data
+        # set start and end dates to previous day to avoid incomplete days when adding new data
+        self.start_date = datetime.strptime(first, '%Y%m%d_%H').replace(hour=0)
         self.end_date = datetime.strptime(last, '%Y%m%d_%H').replace(hour=23) - timedelta(1)
 
-        os.makedirs(f'{self.caching_folder}/{int(self.frequency.total_seconds())}s', exist_ok=True)
-        os.makedirs(f'{self.caching_folder}/original_frequency', exist_ok=True)
+        os.makedirs(f'{self.caching_folder}/{self.levels}_levels/{int(self.frequency.total_seconds())}s', exist_ok=True)
+        os.makedirs(f'{self.caching_folder}/{self.levels}_levels/original_frequency', exist_ok=True)
 
     def get_data(self): # TODO consider returning date rage
         self.transform_and_resample()
-        resampled_csv_files = f'{self.caching_folder}/{int(self.frequency.total_seconds())}s/*.csv.gz'
+        resampled_csv_files = f'{self.caching_folder}/{self.levels}_levels/{int(self.frequency.total_seconds())}s/*.csv.gz'
         return dd.read_csv(resampled_csv_files, compression='gzip')
 
     def transform_and_resample(self): # TODO consider returning date rage
@@ -52,12 +52,12 @@ class LOBData:
             day_folder = datetime.strftime(date_to_process, '%Y/%m/%d')
             day_cache_file_name = f'{datetime.strftime(date_to_process, "%Y-%m-%d")}.csv.gz'
             freq = f'{int(self.frequency.total_seconds())}s'
-            resampled_file_name = f'{self.caching_folder}/{freq}/{day_cache_file_name}'
+            resampled_file_name = f'{self.caching_folder}/{self.levels}_levels/{freq}/{day_cache_file_name}'
             if os.path.isfile(resampled_file_name):
                 print(f'Found {resampled_file_name}')
             else:
                 print(f'Generating {resampled_file_name}')
-                original_file_name = f'{self.caching_folder}/original_frequency/{day_cache_file_name}'
+                original_file_name = f'{self.caching_folder}/{self.levels}_levels/original_frequency/{day_cache_file_name}'
                 if os.path.isfile(original_file_name):
                     day_data = pd.read_csv(original_file_name, parse_dates=['Datetime'])
                 else:
@@ -75,11 +75,15 @@ class LOBData:
                     # number of seconds in a day / frequencey in seconds
                     snapshot_count_day = int(24 * 60 * 60 / self.frequency.total_seconds())
                     if len(raw_data) != snapshot_count_day:
-                        print(f'{snapshot_count_day - len(raw_data)} gaps in {original_file_name}')
+                        diff = snapshot_count_day - len(raw_data)
+                        if diff > 0:
+                            print(f'{diff} gaps in {original_file_name}')
+                        else:
+                            print(f'{diff * -1} additional data points in {original_file_name}')
 
                     #del(raw_data['BTC_XRP-20200404_000000'])
 
-                    #TODO fix sequence order frequency
+                    #TODO fix sequence order
 
                     raw_data_frame = pd.DataFrame.from_dict(raw_data, orient='index')
                     raw_data_frame.reset_index(inplace=True)
@@ -88,7 +92,7 @@ class LOBData:
                     raw_data_frame.set_index('index',drop=True,inplace=True)
                     raw_data_frame.sort_index(inplace=True)
                     idx_start = date_to_process
-                    idx_end = date_to_process + timedelta(days=1)
+                    idx_end = date_to_process + timedelta(days=1) - timedelta(seconds=1)
                     idx = pd.date_range(idx_start, idx_end, freq=freq)
                     raw_data_frame = raw_data_frame.reindex(idx).ffill().fillna(method='bfill') # forward fill gaps and back fill first item if missing
 
@@ -191,11 +195,11 @@ class LOBData:
 
 # TODO add method which returns data with different frequency
 
-root_path = '/home/pawel/Documents/LOB-data/new-format' # path where zipped files are stored
-root_caching_folder = '/home/pawel/Documents/LOB-data/cache' # processed cached data folder
-security = 'BTC_ETH'
+root_path = '/home/pawel/Documents/LOB-data/mixed' # path where zipped files are stored
+root_caching_folder = '/home/pawel/Documents/LOB-data/cache2' # processed cached data folder
+security = 'USDT_BTC'
 
-data = LOBData(root_path, security, root_caching_folder, timedelta(seconds=1))
+data = LOBData(root_path, security, root_caching_folder, timedelta(seconds=10), 15)
 df = data.get_data()
 print('DataFrame loaded')
 # computed = df.compute()
@@ -209,7 +213,7 @@ print('DataFrame loaded')
 start_date = datetime.strftime(data.start_date, '%Y_%m_%d')
 end_date = datetime.strftime(data.end_date, '%Y_%m_%d')
 
-output_file_name = f'{security}--10seconds--{start_date}--{end_date}.csv.gz'
+output_file_name = f'{security}--15lev--10sec--{start_date}--{end_date}.csv.gz'
 df.to_csv(f'{root_caching_folder}/{security}/{output_file_name}', compression='gzip', single_file = True)
 print('Saved CSV')
 
