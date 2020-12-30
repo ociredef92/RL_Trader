@@ -79,7 +79,9 @@ def get_labels(ts, k_plus, k_minus, alpha, long_only=True):
 
 
 def back_to_labels(x):
-    '''
+    '''Map ternary predictions in format [0.01810119, 0.47650802, 0.5053908 ]
+    back to 1,0,-1. Used in conjuction with numpy.argmax, which returns the index
+    of the label with the highest probability.
     '''
 
     if x == 0:
