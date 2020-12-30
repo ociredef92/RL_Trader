@@ -78,9 +78,21 @@ def get_labels(ts, k_plus, k_minus, alpha, long_only=True):
             np.where(direction<-alpha, -1, 0)), index=direction.index, name='labels')    
 
 
-def get_pnl(px_ts, labels, trading_fee=0.000712):
+def back_to_labels(x):
     '''
-    Function to get pnl from a price time series and respective labels
+    '''
+
+    if x == 0:
+        return 0
+
+    elif x == 1:
+        return 1
+
+    elif x == 2:
+        return -1
+
+def get_pnl(px_ts, labels, trading_fee=0.000712):
+    '''Function to get pnl from a price time series and respective labels
     px_ts and labels series must be mergeable by index
 
     Arguments:
@@ -107,9 +119,9 @@ def get_pnl(px_ts, labels, trading_fee=0.000712):
     df['return'] = df['px'].pct_change()
     df['realized_return'] = df['return'] * df['labels']
     df['trade_flag'] = df.index.isin(idx)
-    df['pnl'] = ((df['labels'] * df['return'] * tr_fees) + 1).cumprod()
+    df['pnl'] = ((df['labels'] * df['return']) + 1).cumprod()
 
-    return ((df['labels'] * df['return'] * tr_fees) + 1).cumprod() - 1, df, idx # labels and label change index
+    return ((df['labels'] * df['return']) + 1).cumprod() - 1, df, idx # labels and label change index
 
 
 
