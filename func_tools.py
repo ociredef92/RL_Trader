@@ -44,7 +44,7 @@ def normalize(ts, ob_levels,norm_type='z_score', roll=0):
     else:
         print('Normalization not perfmed, please check your code')
 
-def get_labels(ts, k_plus, k_minus, alpha, long_only=True):
+def get_labels(ts_norm, ts_real, k_plus, k_minus, alpha, long_only=True):
     '''
     Function to label timeseries - buy, sell, nothing
 
@@ -58,25 +58,25 @@ def get_labels(ts, k_plus, k_minus, alpha, long_only=True):
     Returns: pandas series
     '''
 
-    m_minus = ts.rolling(k_minus).mean() # mean prev k prices
-    m_plus = ts.shift(-k_plus).rolling(k_plus).mean() # # mean next k prices
+    m_minus = ts_norm.rolling(k_minus).mean() # mean prev k prices
+    m_plus = ts_norm.shift(-k_plus).rolling(k_plus).mean() # # mean next k prices
 
     # direction of price movements at time t
     #direction = (m_plus - m_minus) / m_minus
 
     direction_pos = (m_plus - m_minus) / m_minus
     direction_neg = (m_minus - m_plus) / m_plus
-    direction = pd.Series(np.where(ts>=0, direction_pos, direction_neg)) # flip when ts is neg
+    direction = pd.Series(np.where(ts_norm>=0, direction_pos, direction_neg)) # flip when ts_norm is neg
 
     if long_only:
         # assign labels based on alpha threshold
-        return pd.Series(np.where(direction>alpha, 1, 0), index=direction.index, name='labels')
+        labels = pd.Series(np.where(direction>alpha, 1, 0), index=direction.index, name='labels')
     
     else:
         # assign labels based on alpha threshold
-        return pd.Series(np.where(direction>alpha, 1, 
-            np.where(direction<-alpha, -1, 0)), index=direction.index, name='labels')    
+        labels = pd.Series(np.where(direction>alpha, 1, np.where(direction<-alpha, -1, 0)), index=direction.index, name='labels')
 
+    return labels
 
 def get_pnl(px_ts, labels, trading_fee=0.000712):
     '''
