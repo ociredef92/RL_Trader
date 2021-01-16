@@ -128,7 +128,7 @@ def get_pnl(px_ts, labels, trading_fee=0.000712):
     return ((df['labels'] * df['return']) + 1).cumprod() - 1, df, idx # labels and label change index
 
 
-def plot_labels_line(px_ts, labels):
+def plot_labels_line(px_ts, labels, title):
     '''Plot labels against price.
     Takes two pandas timeseries as inputs. These need to be subsets of the same
     DataFrame or have same length
@@ -140,11 +140,19 @@ def plot_labels_line(px_ts, labels):
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(go.Scatter(y=px_ts, x=px_ts.index, name='Price'), secondary_y=False)
-    fig.add_trace(go.Scatter(y=labels, x=labels.index, name='Labels'), secondary_y=True)
-    fig.update_layout(title='<b>Labels</b>')
+    fig.add_trace(go.Scatter(y=labels, x=labels.index, name='Labels', marker=dict(color='rgba(240, 52, 52, 0.3)')), secondary_y=True)
+    fig.update_layout(title=f'<b>{title} Labels</b>')
     fig.update_yaxes(title_text='ccy', secondary_y=False)
     fig.update_yaxes(title_text='label', secondary_y=True)
     
+    fig.update_layout(
+        xaxis=dict(
+            rangeslider=dict(
+                visible=True
+            ),
+        )
+    )
+
     return fig.show()
 
 def get_strategy_pnl(px_ts, labels, trading_fee=0.000712, min_profit=0.0020, plotting=False, return_df=True):
@@ -179,7 +187,7 @@ def get_strategy_pnl(px_ts, labels, trading_fee=0.000712, min_profit=0.0020, plo
     if plotting:
         histo_trades = px.histogram(positive_trades)
         histo_trades.show()
-        cum_profit = px.line(df['individual_positive_returns'].fillna(0).cumsum())
+        cum_profit = px.line(df['individual_positive_returns'].fillna(0).cumsum().iloc[::1000])
         cum_profit.show()
     if return_df:
         # create cleaned labels column - wasteful to run this on optimization stage
