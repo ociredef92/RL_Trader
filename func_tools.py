@@ -128,7 +128,7 @@ def get_pnl(px_ts, labels, trading_fee=0.000712):
     return ((df['labels'] * df['return']) + 1).cumprod() - 1, df, idx # labels and label change index
 
 
-def plot_labels_line(px_ts, labels, title):
+def plot_labels_line(px_ts, labels, title='Labels'):
     '''Plot labels against price.
     Takes two pandas timeseries as inputs. These need to be subsets of the same
     DataFrame or have same length
@@ -140,11 +140,14 @@ def plot_labels_line(px_ts, labels, title):
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(go.Scatter(y=px_ts, x=px_ts.index, name='Price'), secondary_y=False)
-    fig.add_trace(go.Scatter(y=labels, x=labels.index, name='Labels', marker=dict(color='rgba(240, 52, 52, 0.3)')), secondary_y=True)
-    fig.update_layout(title=f'<b>{title} Labels</b>')
-    fig.update_yaxes(title_text='ccy', secondary_y=False)
+    fig.add_trace(go.Scatter(y=labels, x=labels.index, name='Labels', marker=dict(color='rgba(240, 52, 52, 0.3)')), 
+        secondary_y=True)
+
+
+    fig.update_layout(title=f'<b>{title}</b>')
+    fig.update_yaxes(title_text='ccy', fixedrange= False, secondary_y=False)
     fig.update_yaxes(title_text='label', secondary_y=True)
-    
+    #fig.update_yaxes(fixedrange= False)
     fig.update_layout(
         xaxis=dict(
             rangeslider=dict(
@@ -182,7 +185,7 @@ def get_strategy_pnl(px_ts, labels, trading_fee=0.000712, min_profit=0.0020, plo
 
     profit = df['individual_positive_returns'].fillna(0).sum()
 
-    print(f'''Total trades: {trade_gross_profit.shape[0]}, # trades > {min_profit}: {positive_trades.shape[0]}, profit: {profit}''')
+    #print(f'''Total trades: {trade_gross_profit.shape[0]}, # trades > {min_profit}: {positive_trades.shape[0]}, profit: {profit}''')
 
     if plotting:
         histo_trades = px.histogram(positive_trades)
@@ -199,6 +202,63 @@ def get_strategy_pnl(px_ts, labels, trading_fee=0.000712, min_profit=0.0020, plo
     else:
         return profit
 
+
+def get_strategy_pnl2(px_ts, labels, min_profit=0.0020, plotting=False, return_df=True):
+    
+    df = pd.merge(px_ts, labels, left_index=True, right_index=True)
+    df.columns = ['px', 'labels']
+
+    labels_ext = np.concatenate(( [0], labels.values, [0])) # extend array for comparison
+    idx = np.flatnonzero(labels_ext[1:] != labels_ext[:-1]) # verify if alignement is correct
+    # non zero indices - remove last. Avoid errors when transaction occurs on last label
+    if idx[-1] >= df.shape[0]:
+        idx = idx[:-1] 
+
+    #df['pctg_chg'] = df['px'].pct_change()
+    df['log_ret'] = np.log(df['px']) - np.log(df['px'].shift(1))
+    df['individual_return'] = df['log_ret'] * df['labels']# need to add +1 to multiply with tr feee
+
+    # auxiliary column to perform groupby and get rough profit estimate
+    df['trade_grouper'] = np.nan
+    df['trade_grouper'].loc[idx] = idx
+    df['trade_grouper'] = df['trade_grouper'].fillna(method='ffill')
+
+    # calculate profits
+    trade_gross_profit = df.groupby('trade_grouper')['individual_return'].sum() # each grouper represents a trade
+    positive_trades = pd.Series(trade_gross_profit[trade_gross_profit - min_profit > 0], name='individual_positive_returns')
+    df = pd.merge(df, positive_trades, left_index=True, right_index=True, how='outer') # add pos trades to the df
+
+    profit = df['individual_positive_returns'].fillna(0).sum()
+
+    # series with trade length filled across the df
+    df['trade_len'] = df.groupby(['labels', 'trade_grouper'])['px'].transform('count')
+
+    # drop na only keeps one row per profitable label
+    df_returns = df.dropna(subset=['individual_positive_returns'])
+    df_returns['weighted_profits'] = (df_returns['individual_positive_returns'] * df_returns['trade_len']) / df_returns['trade_len'].sum()
+
+    #average profit
+    ap = df_returns['individual_positive_returns'].mean()
+    # profit weighted by trade length
+    wap = df_returns['weighted_profits'].sum()
+
+    print(f'''Total trades: {trade_gross_profit.shape[0]}, # trades > {min_profit}: {positive_trades.shape[0]}, sum profit: {profit:.2f}, avg profit: {ap:.6f}, wavg profit:{wap:.6f}''')
+
+    if plotting:
+        histo_trades = px.histogram(positive_trades)
+        histo_trades.show()
+        cum_profit = px.line(df['individual_positive_returns'].fillna(0).cumsum().iloc[::1000])
+        cum_profit.show()
+    if return_df:
+        # create cleaned labels column - wasteful to run this on optimization stage
+        positive_trade_idx = df[df['individual_positive_returns']>0]['trade_grouper'] # positive trade start
+        positive_df_idx = df[df['trade_grouper'].isin(positive_trade_idx)].index # all "timeseries" of positive trades
+        df['cleaned_labels'] = 0 # create column with all 0 labels
+        df['cleaned_labels'].loc[positive_df_idx] = df['labels'].loc[positive_df_idx] # replace 0s with labels of positive trades
+        return wap, df
+    else:
+        return wap
+        
 
 def cnn_data_reshaping(X, Y, T):
     '''
