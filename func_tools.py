@@ -46,7 +46,7 @@ def normalize(ts, ob_levels,norm_type='z_score', roll=0):
     else:
         print('Normalization not perfmed, please check your code')
 
-def get_labels(ts, k_plus, k_minus, alpha, long_only=True):
+def get_labels(ts, k_plus, k_minus, alpha, technique='ma', long_only=True, return_smooth=False):
     '''
     Function to label timeseries - buy, sell, nothing
 
@@ -60,8 +60,13 @@ def get_labels(ts, k_plus, k_minus, alpha, long_only=True):
     Returns: pandas series
     '''
 
-    m_minus = ts.rolling(k_minus).mean() # mean prev k prices
-    m_plus = ts.shift(-k_plus).rolling(k_plus).mean() # # mean next k prices
+    if technique == 'ma':
+        m_minus = ts.rolling(k_minus).mean() # mean prev k prices
+        m_plus = ts.shift(-k_plus).rolling(k_plus).mean() # # mean next k prices
+
+    elif technique == 'ema':
+        m_minus = ts.ewm(alpha=0.1).mean()
+        m_plus = ts.shift(-k_plus).ewm(alpha=0.1).mean()
 
     # direction of price movements at time t
     #direction = (m_plus - m_minus) / m_minus
@@ -75,9 +80,14 @@ def get_labels(ts, k_plus, k_minus, alpha, long_only=True):
         return pd.Series(np.where(direction>alpha, 1, 0), index=direction.index, name='labels')
     
     else:
-        # assign labels based on alpha threshold
-        return pd.Series(np.where(direction>alpha, 1, 
-            np.where(direction<-alpha, -1, 0)), index=direction.index, name='labels')    
+        if return_smooth:
+            return pd.Series(np.where(direction>alpha, 1, 
+                np.where(direction<-alpha, -1, np.nan)), index=direction.index, name='labels'), m_minus, m_plus    
+        else:
+            # assign labels based on alpha threshold
+            return pd.Series(np.where(direction>alpha, 1, 
+                np.where(direction<-alpha, -1, np.nan)), index=direction.index, name='labels')
+    
 
 
 def back_to_labels(x):
@@ -128,12 +138,12 @@ def get_pnl(px_ts, labels, trading_fee=0.000712):
     return ((df['labels'] * df['return']) + 1).cumprod() - 1, df, idx # labels and label change index
 
 
-def plot_labels_line(px_ts, labels, title='Labels'):
+def plot_labels_line(px_ts, labels, title='Labels', **kwargs):
     '''Plot labels against price.
     Takes two pandas timeseries as inputs. These need to be subsets of the same
     DataFrame or have same length
     '''
-
+    #print(kwargs)
     # check index
     condition = (px_ts.index == labels.index).sum()
     assert condition == px_ts.shape[0] == labels.shape[0], 'px_ts and labels must have the same index to be correctly plotted'
@@ -144,7 +154,13 @@ def plot_labels_line(px_ts, labels, title='Labels'):
         secondary_y=True)
 
 
-    fig.update_layout(title=f'<b>{title}</b>')
+    for arg, key in zip(kwargs.values(), kwargs.keys()):
+        if 'label' in key or 'direction' in key:
+            fig.add_trace(go.Scatter(y=arg, x=arg.index, name=key), secondary_y=True)
+        else:
+            fig.add_trace(go.Scatter(y=arg, x=arg.index, name=key), secondary_y=False)
+
+    fig.update_layout(title=f'<b>{title}</b>', width=1200, height=800)
     fig.update_yaxes(title_text='ccy', fixedrange= False, secondary_y=False)
     fig.update_yaxes(title_text='label', secondary_y=True)
     #fig.update_yaxes(fixedrange= False)
@@ -179,13 +195,16 @@ def get_strategy_pnl(px_ts, labels, trading_fee=0.000712, min_profit=0.0020, plo
     df['trade_grouper'] = df['trade_grouper'].fillna(method='ffill')
 
     # calculate profits
-    trade_gross_profit = df.groupby('trade_grouper')['individual_return'].sum() # each grouper represents a trade
+    trade_gross_profit = pd.Series(df.groupby('trade_grouper')['individual_return'].sum(), name='Gross returns') # each grouper represents a trade
     positive_trades = pd.Series(trade_gross_profit[trade_gross_profit - min_profit > 0], name='individual_positive_returns')
+
+    df = pd.merge(df, trade_gross_profit, left_index=True, right_index=True, how='outer') # add gross
     df = pd.merge(df, positive_trades, left_index=True, right_index=True, how='outer') # add pos trades to the df
 
     profit = df['individual_positive_returns'].fillna(0).sum()
 
-    #print(f'''Total trades: {trade_gross_profit.shape[0]}, # trades > {min_profit}: {positive_trades.shape[0]}, profit: {profit}''')
+    #
+    print(f'''Total trades: {trade_gross_profit.shape[0]}, # trades > {min_profit}: {positive_trades.shape[0]}, profit: {profit}''')
 
     if plotting:
         histo_trades = px.histogram(positive_trades)
@@ -224,40 +243,46 @@ def get_strategy_pnl2(px_ts, labels, min_profit=0.0020, plotting=False, return_d
     df['trade_grouper'] = df['trade_grouper'].fillna(method='ffill')
 
     # calculate profits
-    trade_gross_profit = df.groupby('trade_grouper')['individual_return'].sum() # each grouper represents a trade
+    trade_gross_profit = pd.Series(df.groupby('trade_grouper')['individual_return'].sum(), name='gross_returns') # each grouper represents a trade
     positive_trades = pd.Series(trade_gross_profit[trade_gross_profit - min_profit > 0], name='individual_positive_returns')
+
+    df = pd.merge(df, trade_gross_profit, left_index=True, right_index=True, how='outer') # add gross
     df = pd.merge(df, positive_trades, left_index=True, right_index=True, how='outer') # add pos trades to the df
 
-    profit = df['individual_positive_returns'].fillna(0).sum()
+    net_profit = df['individual_positive_returns'].fillna(0).sum()
+    gross_profit = df['gross_returns'].fillna(0).sum()
 
     # series with trade length filled across the df
     df['trade_len'] = df.groupby(['labels', 'trade_grouper'])['px'].transform('count')
 
     # drop na only keeps one row per profitable label
     df_returns = df.dropna(subset=['individual_positive_returns'])
-    df_returns['weighted_profits'] = (df_returns['individual_positive_returns'] * df_returns['trade_len']) / df_returns['trade_len'].sum()
+    #df_returns['weighted_profits'] = (df_returns['individual_positive_returns'] * df_returns['trade_len']) / df_returns['trade_len'].sum()
 
     #average profit
-    ap = df_returns['individual_positive_returns'].mean()
+    ap = df['gross_returns'].mean()
+    app = df['individual_positive_returns'].mean()
     # profit weighted by trade length
-    wap = df_returns['weighted_profits'].sum()
+    #wap = df_returns['gross_returns'].sum()
 
-    print(f'''Total trades: {trade_gross_profit.shape[0]}, # trades > {min_profit}: {positive_trades.shape[0]}, sum profit: {profit:.2f}, avg profit: {ap:.6f}, wavg profit:{wap:.6f}''')
+    print(f'''Total trades: {trade_gross_profit.shape[0]}, # trades > {min_profit}: {positive_trades.shape[0]}, 
+    all trades sum: {gross_profit:.2f}, all trades avg: {ap:.6f}, 
+    pos trades sum: {net_profit:.2f}, pos trades avg: {app:.6f}''')
 
     if plotting:
-        histo_trades = px.histogram(positive_trades)
+        histo_trades = px.histogram(trade_gross_profit, title='All trades')
         histo_trades.show()
-        cum_profit = px.line(df['individual_positive_returns'].fillna(0).cumsum().iloc[::1000])
-        cum_profit.show()
+        # cum_profit = px.line(df['individual_positive_returns'].fillna(0).cumsum().iloc[::1000])
+        # cum_profit.show()
     if return_df:
         # create cleaned labels column - wasteful to run this on optimization stage
         positive_trade_idx = df[df['individual_positive_returns']>0]['trade_grouper'] # positive trade start
         positive_df_idx = df[df['trade_grouper'].isin(positive_trade_idx)].index # all "timeseries" of positive trades
         df['cleaned_labels'] = 0 # create column with all 0 labels
         df['cleaned_labels'].loc[positive_df_idx] = df['labels'].loc[positive_df_idx] # replace 0s with labels of positive trades
-        return wap, df
+        return ap, df
     else:
-        return wap
+        return ap
         
 
 def cnn_data_reshaping(X, Y, T):
@@ -398,7 +423,7 @@ def label_insights(labels):
 
     print(f'Labels shape: {labels.shape}')
     print(f'Labels: {unique_labels} \nCount: {counts_labels} \nPctg: {percent_labels}')
-    print(f'Number of total transaction: {idx.shape[0]}')
+    print(f'Number of trades: {idx.shape[0]}')
 
     return idx.shape[0]
 
