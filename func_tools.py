@@ -104,49 +104,6 @@ def reshape_lob_levels(z_df, output_type='array'):
         depth_values = reshaped_z_df.values # numpy array ready to be used as input for cnn_data_reshaping
         return depth_values, dt_index
 
-
-# Model training - labelling and backtesting
-def get_labels(ts, span_plus, span_minus, a, technique='ma', long_only=True, return_smooth=False):
-    '''
-    Function to label timeseries - buy, sell, nothing
-
-    Arguments:
-    ts -- pandas series or array
-    span_plus -- integer, prediction horizon (how much forward am I looking to get price direction)
-    span_minus -- integer, prediction horizon (how much backward am I looking to get price direction)
-    alpha -- float, threshold for applying labels
-    long_only -- boolean that to turn off/on profits from short-selling
-
-    Returns: pandas series
-    '''
-
-    if technique == 'ma':
-        m_minus = ts.rolling(span_minus).mean() # mean prev k prices
-        m_plus = ts.shift(-span_plus).rolling(span_plus).mean() # # mean next k prices
-
-    elif technique == 'ema':
-        m_minus = ts.ewm(span=span_minus, min_periods=span_minus).mean()
-        m_plus = ts.shift(-span_plus).ewm(span=span_plus, min_periods=span_plus).mean()
-
-    # direction of price movements at time t
-    #direction = (m_plus - m_minus) / m_minus
-
-    direction_pos = (m_plus - m_minus) / m_minus
-    direction_neg = (m_minus - m_plus) / m_plus
-    direction = pd.Series(np.where(ts>=0, direction_pos, direction_neg)) # flip when ts is neg
-
-    if long_only:
-        # assign labels based on alpha threshold
-        return pd.Series(np.where(direction>a, 1, 0), index=direction.index, name='labels')
-    
-    else:
-        if return_smooth:
-            return pd.Series(np.where(direction>a, 1, 
-                np.where(direction<-a, -1, np.nan)), index=direction.index, name='labels'), m_minus, m_plus    
-        else:
-            # assign labels based on alpha threshold
-            return pd.Series(np.where(direction>a, 1, 
-                np.where(direction<-a, -1, np.nan)), index=direction.index, name='labels')
     
 
 def label_insights(labels):
@@ -269,6 +226,50 @@ def back_to_labels(x):
 
 
 # OLD functions to DELETE
+
+# # Model training - labelling and backtesting
+# def get_labels(ts, span_plus, span_minus, a, technique='ma', long_only=True, return_smooth=False):
+#     '''
+#     Function to label timeseries - buy, sell, nothing
+
+#     Arguments:
+#     ts -- pandas series or array
+#     span_plus -- integer, prediction horizon (how much forward am I looking to get price direction)
+#     span_minus -- integer, prediction horizon (how much backward am I looking to get price direction)
+#     alpha -- float, threshold for applying labels
+#     long_only -- boolean that to turn off/on profits from short-selling
+
+#     Returns: pandas series
+#     '''
+
+#     if technique == 'ma':
+#         m_minus = ts.rolling(span_minus).mean() # mean prev k prices
+#         m_plus = ts.shift(-span_plus).rolling(span_plus).mean() # # mean next k prices
+
+#     elif technique == 'ema':
+#         m_minus = ts.ewm(span=span_minus, min_periods=span_minus).mean()
+#         m_plus = ts.shift(-span_plus).ewm(span=span_plus, min_periods=span_plus).mean()
+
+#     # direction of price movements at time t
+#     #direction = (m_plus - m_minus) / m_minus
+
+#     direction_pos = (m_plus - m_minus) / m_minus
+#     direction_neg = (m_minus - m_plus) / m_plus
+#     direction = pd.Series(np.where(ts>=0, direction_pos, direction_neg)) # flip when ts is neg
+
+#     if long_only:
+#         # assign labels based on alpha threshold
+#         return pd.Series(np.where(direction>a, 1, 0), index=direction.index, name='labels')
+    
+#     else:
+#         if return_smooth:
+#             return pd.Series(np.where(direction>a, 1, 
+#                 np.where(direction<-a, -1, np.nan)), index=direction.index, name='labels'), m_minus, m_plus    
+#         else:
+#             # assign labels based on alpha threshold
+#             return pd.Series(np.where(direction>a, 1, 
+#                 np.where(direction<-a, -1, np.nan)), index=direction.index, name='labels')
+
 
 # def get_pnl(px_ts, labels, trading_fee=0.000712):
 #     '''Function to get pnl from a price time series and respective labels
