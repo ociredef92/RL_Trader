@@ -1,8 +1,29 @@
 import numpy as np
 import pandas as pd
 import plotly_express as px
+import plotly.figure_factory as ff
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+
+
+def intraday_vol_ret(px_ts, span=100):
+    '''
+    Function to return rolling daily returns and exponentially weighted volatility
+
+    Arguments:
+    px_ts -- pandas series with a datetime index
+    span -- integer, represents the ewm decay factor in terms of span: α=2/(span+1), for span≥1
+    '''
+
+    assert isinstance(px_ts.index, pd.DatetimeIndex), "px series must have a datetime index"
+    
+    df = px_ts.index.searchsorted(px_ts.index-pd.Timedelta(days=1)) # returns a scalar array of insertion point
+    df = df[df>0] # remove inserion points of 0
+    df = pd.Series(px_ts.index[df-1], index=px_ts.index[px_ts.shape[0]-df.shape[0]:]) # -1 to rebase to 0, index is a shifted version
+    ret = px_ts.loc[df.index]/px_ts.loc[df.values].values-1 # "today" / yesterday - 1 -> 1d rolling returns
+    vol = ret.ewm(span=span).std() # exponential weighted std. Specify decay in terms of span
+
+    return ret, vol
 
 
 # Model training - data preparation
@@ -167,7 +188,8 @@ def plot_labels_line(px_ts, labels, title='Labels', **kwargs):
 # Backtesting
 def get_strategy_pnl(px_ts, labels):
     
-    df = pd.merge(px_ts, labels, left_index=True, right_index=True)
+    df = pd.merge(px_ts, labels, left_index=True, right_index=True) # default how is inner
+    df.index = np.arange(0,df.shape[0])
     df.columns = ['px', 'labels']
 
     labels_ext = np.concatenate(( [0], labels.values, [0])) # extend array for comparison
@@ -176,7 +198,7 @@ def get_strategy_pnl(px_ts, labels):
     if idx[-1] >= df.shape[0]:
         idx = idx[:-1] 
 
-    df['log_ret'] = np.log(df['px']) - np.log(df['px'].shift(1))
+    df['log_ret'] = np.log(df['px']) - np.log(df['px'].shift(1))#df['px'].pct_change()#np.log(df['px']) - np.log(df['px'].shift(1))
     df['individual_return'] = df['log_ret'] * df['labels']# need to add +1 to multiply with tr feee
 
     # auxiliary column to perform groupby and get rough profit estimate
@@ -205,7 +227,74 @@ def get_strategy_pnl(px_ts, labels):
     # df['cleaned_labels'].loc[positive_df_idx] = df['labels'].loc[positive_df_idx] # replace 0s with labels of positive trades
     
     return df
-        
+
+# Backtesting Visualization
+def plot_trades_distribution(df_trades, bin_size=0.0001, metric='gross_returns', fig_width=900, fig_height=550):
+    ''' Plot trades distribution and approx distribution curve.
+    Takes as an input df_trades from stratgy pnl, bin_size (default 1bp) and gross return as metrix
+    '''
+
+    trades = [df_trades['gross_returns'].values]
+    labels = ['Trades']
+    fig = ff.create_distplot(trades, labels, bin_size = 0.0001, show_rug=False)
+    # Add shapes
+    avg = np.mean(trades)
+    stdev = np.std(trades)
+
+    fig.add_shape(type="line", yref='paper',
+        x0=avg, y0=0, x1=avg, y1=1,
+        line=dict(color="RoyalBlue",width=2)
+    )
+
+    fig.add_shape(type="line", yref='paper',
+        x0=avg+stdev, y0=0, x1=avg+stdev, y1=1,
+        line=dict(color="RoyalBlue",width=2, dash="dot")
+    )
+
+    fig.add_shape(type="line", yref='paper',
+        x0=avg-stdev, y0=0, x1=avg-stdev, y1=1,
+        line=dict(color="RoyalBlue",width=2, dash="dot")
+    )
+
+    fig.add_shape(type="line", yref='paper',
+        x0=0, y0=0, x1=0, y1=1,
+        line=dict(color="rgba(0, 0, 0, 0.5)",width=2, dash="dashdot")
+    )
+
+    fig.update_layout(title=f"<b>Trades distribution - {metric}</b>", width=fig_width, height=fig_height, xaxis=dict(tickformat=',.3%'))
+    fig.show()    
+
+
+def plot_trades_length_overview(df_trades, x='trade_len',  y='gross_returns'):
+    ''' Plot visual insight for lavels on x variable (default "trade_len"):
+    1) histogram with count of x
+    2) histogram with x vs average y (default "gross_returns")
+    3) individual trades x vs y
+
+    Takes as an input df_trades from stratgy pnl, with x and y being columns of df_trades
+    '''
+
+    max_trade_length = int(df_trades['trade_len'].max())
+    hist_trade_length = px.histogram(df_trades, x=x, color='labels', title=f'<b>{x}</b>')
+    avg = df_trades['trade_len'].mean() # average trade length
+    hist_trade_length.add_shape(type="line", yref='paper',
+        x0=avg, y0=0, x1=avg, y1=1,
+        line=dict(color="rgba(0, 0, 0, 0.5)",width=2, dash="dashdot")
+    )
+    hist_trade_length.show()
+
+    # Plot net returns (by length and average returns)
+    hist_ret_len = px.histogram(df_trades, x=x, y=y, histfunc='avg', color='labels', nbins=max_trade_length, title=f'<b>{y} by {x}</b>')
+    hist_ret_len.update_layout(yaxis=dict(tickformat=',.3%'))
+    hist_ret_len.show()
+
+    # Plot individual trades vs trade length
+    avg_net_by_length = df_trades.groupby('trade_len')['gross_returns'].mean()
+    ret_len_scatter = px.scatter(df_trades, x=x, y=y, color=df_trades['labels'].astype('str'), opacity=0.3, title=f'<b>{y} single trades</b>')
+    ret_len_scatter.add_trace(go.Scatter(x=avg_net_by_length.index, y=avg_net_by_length.values, mode='lines', name='Average'))
+    ret_len_scatter.update_layout(yaxis=dict(tickformat=',.3%'))
+    ret_len_scatter.show()
+
 
 # Evaluate model preditctions
 def back_to_labels(x):
