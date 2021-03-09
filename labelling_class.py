@@ -34,7 +34,8 @@ class Labels_Generator:
 
         # first level difference - smoothed time series direction
         a = 0
-        d = np.diff(self.get_norm_smooth_px())
+        # gradient preserves shape, default unitary spacing
+        d = np.gradient(self.get_norm_smooth_px())
 
         # label based on the direction
         self.labels = pd.Series(np.where(d>a, 1, np.where(d<a, -1, 0)),  name='labels')
@@ -69,3 +70,58 @@ class Labels_Generator:
         cleaned_labels.loc[df_trades['trade_grouper']] = df_trades['cleaned_labels']
         # ffill the 'exploded' timeseries with prev values
         self.labels = cleaned_labels.fillna(method='ffill')
+
+        return df_trades
+
+
+def three_barrier_labelling(mix_px, h=700, factor=[1.0020, 0.9980]):
+    '''
+    Alternative labelling technique inspired to "three barriers method" on Advances in Financial Machine Learning book
+    explanation: https://mlfinlab.readthedocs.io/en/latest/labeling/tb_meta_labeling.html
+    Compared to the method above it tends to lag. The current implementation can cut positive running labels at any point.
+    barriers depending on volatility still to be implmeneted. Also vertical barrier should depend on volatility
+    '''
+
+    counter = 0
+    output =  mix_px.copy(deep=True) ## can use smoothed verison here
+    output = pd.DataFrame(output)
+    output['labels'] = 12345 # placeholder
+
+    while counter <= mix_px.shape[0]: ##
+        print(f'start {counter} and end {counter+h}')
+        slice_df = mix_px[counter:counter+h] # path prices ##
+        ut = pd.Series(np.full((slice_df.shape[0], ), 1, dtype=float), index=slice_df.index) # upper threshold, to do: function of volatility
+        lt = pd.Series(np.full((slice_df.shape[0], ), 1, dtype=float), index=slice_df.index) # lower threshold, to do: function of volatility
+
+        take_profit = (ut*factor[0])-1 # upper barrier
+        stop_loss = (lt*factor[1])-1  # lower barrier
+
+        slice_df = (slice_df/slice_df[0]-1) # path returns
+
+        take_profit_touch = slice_df[slice_df>take_profit].index.min() # find upper touch time
+        stop_loss_touch = slice_df[slice_df<stop_loss].index.min() # find lower touch time
+
+        if pd.isna(take_profit_touch) and pd.isna(stop_loss_touch):
+            output.loc[slice_df.index[0]: slice_df.index[-1],'labels'] = 0 # if no touch, assign 0 till vertical barrier
+            counter+=h
+
+        elif not pd.isna(take_profit_touch) and pd.isna(stop_loss_touch):
+            output.loc[slice_df.index[0]: take_profit_touch,'labels'] = 1 # assign 1 until take profit is touched
+            counter+=slice_df.index.get_loc(take_profit_touch)
+
+        elif pd.isna(take_profit_touch) and not pd.isna(stop_loss_touch):
+            output.loc[slice_df.index[0]: stop_loss_touch,'labels'] = -1 # assign -1 until stop loss is touched
+            counter+=slice_df.index.get_loc(stop_loss_touch)
+
+        elif not pd.isna(take_profit_touch) and not pd.isna(stop_loss_touch): # assign +1 or -1 to what is touched first
+            if take_profit_touch<stop_loss_touch:
+                output.loc[slice_df.index[0]: take_profit_touch,'labels'] = 1
+                counter+=slice_df.index.get_loc(take_profit_touch)
+
+            elif stop_loss_touch<take_profit_touch:
+                output.loc[slice_df.index[0]: take_profit_touch,'labels'] = -1
+                counter+=slice_df.index.get_loc(stop_loss_touch)
+        else:
+            print(f'Occurrence not capture between {counter} and {counter+h}')
+
+    return output
