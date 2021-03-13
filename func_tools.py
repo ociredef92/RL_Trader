@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-
+import os
 
 def intraday_vol_ret(px_ts, span=100):
     '''
@@ -20,6 +20,109 @@ def intraday_vol_ret(px_ts, span=100):
     vol = ret.ewm(span=span).std() # exponential weighted std. Specify decay in terms of span
 
     return ret, vol
+
+# Higher level workflow function to keep notebooks tidy
+def import_px_data(experiments_folder, frequency, pair, date_start, date_end, lob_depth, norm_type, roll):
+    '''
+    Function that loads preprocessed data ready to be shaped/used for the model to train.
+    Experiment folder is the path where data has been cached. The other parameters are part of the
+    unique cached file nomenclature. If the file does not exist, it is generated frrom the input data
+    in the "else" block
+
+    Arguments:
+    experiments_folder -- string, path where standardized data is stored
+    frequency --  timedelta, the minimum time granularity (e.g. timedelta(seconds=10))
+    pair -- string, pair to be uploaded (e.g.'USDT_BTC')
+    date_start -- string, timeseries start
+    date_end -- string, timeseries end
+    lob_depth -- integer, how many levels of the order book to be considered
+    norm_type -- string, can assume values of 'z' or 'dyn' for z-score or dynamic z-score
+    roll -- integer, function of the granularity provided
+    '''
+
+    cache_folder = f'{experiments_folder}/cache' # get ready data cache path
+    frequency_seconds = int(frequency.total_seconds())
+    os.makedirs(f'{cache_folder}/{pair}', exist_ok=True)
+
+    # Data import - needs to be adjusted importing from several files using Dask
+    input_file_name = f'{pair}--{lob_depth}lev--{frequency_seconds}sec--{date_start}--{date_end}.csv.gz'
+
+    normalized_train_file = f'{cache_folder}/{pair}/TRAIN--{norm_type}-{roll}--{input_file_name}'
+    normalized_test_file = f'{cache_folder}/{pair}/TEST--{norm_type}-{roll}--{input_file_name}'
+
+    top_ob_train_file = f'{cache_folder}/{pair}/TRAIN_TOP--{input_file_name}'
+    top_ob_test_file = f'{cache_folder}/{pair}/TEST_TOP--{input_file_name}'
+
+    if os.path.isfile(normalized_test_file): # testing for one of cache files, assuming all were saved
+        # Import cached standardized data
+        print(f'Reading cached {normalized_train_file}')
+        train_dyn_df = pd.read_csv(normalized_train_file, index_col=1)
+        print(f'Reading cached {normalized_test_file}')
+        test_dyn_df = pd.read_csv(normalized_test_file, index_col=1)
+
+        print(f'Reading cached {top_ob_train_file}')
+        top_ob_train = pd.read_csv(top_ob_train_file, index_col=1)
+        print(f'Reading cached {top_ob_test_file}')
+        top_ob_test = pd.read_csv(top_ob_test_file, index_col=1)
+
+        return train_dyn_df, test_dyn_df, top_ob_train, top_ob_test
+
+    else:
+        input_data_folder = f'{experiments_folder}/input' # non standardized input data
+        print(f'Reading {input_data_folder}/{input_file_name}')
+        data = pd.read_csv(f'{input_data_folder}/{input_file_name}', index_col=0)
+        assert lob_depth == data['Level'].max() + 1 # number of levels of order book
+
+        return standardized_data_cache(data, roll, lob_depth, normalized_train_file, normalized_test_file, top_ob_train_file, top_ob_test_file)
+
+
+def standardized_data_cache(data, roll, lob_depth, normalized_train_file, normalized_test_file, top_ob_train_file, top_ob_test_file):
+    # Train test split
+    train_test_split = int((data.shape[0] / lob_depth) * 0.7) # slice reference for train and test
+    train_timestamps = data['Datetime'].unique()[:train_test_split]
+    test_timestamps = data['Datetime'].unique()[train_test_split:]
+
+    train_cached_data = data[data['Datetime'].isin(train_timestamps)].set_index(['Datetime', 'Level'])
+    test_cached_data = data[data['Datetime'].isin(test_timestamps)].set_index(['Datetime', 'Level'])
+
+    print(f'Train dataset shape: {train_cached_data.shape} - Test dataset shape: {test_cached_data.shape}')
+
+    roll_shift = roll+1 # rolling period for dyn z score - + 1 from shift in ft.normalize
+
+    # Training
+    # custom rolling standardization for px and size separately
+    train_dyn_prices = standardize(train_cached_data[['Ask_Price', 'Bid_Price']], lob_depth, 'dyn_z_score', roll)
+    train_dyn_volumes = standardize(train_cached_data[['Ask_Size', 'Bid_Size']], lob_depth, 'dyn_z_score', roll)
+    train_dyn_df = pd.concat([train_dyn_prices, train_dyn_volumes], axis=1).reset_index() # concat along row index #1
+    print(f'Saving {normalized_train_file}')
+    train_dyn_df.to_csv(normalized_train_file, compression='gzip') # save normalized data to csv 
+
+    top_ob_train = train_cached_data[train_cached_data.index.get_level_values(1)==0][roll_shift:] #3
+    top_ob_train['Mid_Price'] = (top_ob_train['Ask_Price'] + top_ob_train['Bid_Price']) / 2
+    top_ob_train['Spread'] = (top_ob_train['Ask_Price'] - top_ob_train['Bid_Price']) / top_ob_train['Mid_Price']
+    top_ob_train['merge_index'] = top_ob_train.reset_index().index.values # useful for merging later
+    print(f'Saving {top_ob_train_file}')
+    top_ob_train.to_csv(top_ob_train_file, compression='gzip') # save top level not normalized to csv
+
+    # print(f'Saving {normalized_data_folder}/{pair}/TRAIN_top--{norm_type}-{roll}--{input_file_name}')
+    # train_dyn_df[train_dyn_df['Level']==0].to_csv(f'{normalized_data_folder}/{pair}/TRAIN_TOP--{norm_type}-{roll}--{input_file_name}', compression='gzip') # save top level to csv 
+
+    # Test
+    # custom rolling standardization for px and size separately
+    test_dyn_prices = standardize(test_cached_data[['Ask_Price', 'Bid_Price']], lob_depth, 'dyn_z_score', roll)
+    test_dyn_volumes = standardize(test_cached_data[['Ask_Size', 'Bid_Size']], lob_depth, 'dyn_z_score', roll)
+    test_dyn_df = pd.concat([test_dyn_prices, test_dyn_volumes], axis=1).reset_index() # concat along row index #2
+    print(f'Saving {normalized_test_file}')
+    test_dyn_df.to_csv(normalized_test_file, compression='gzip') # save normalized data to csv
+
+    top_ob_test = test_cached_data[test_cached_data.index.get_level_values(1)==0][roll_shift:] #4
+    top_ob_test['Mid_Price'] = (top_ob_test['Ask_Price'] + top_ob_test['Bid_Price']) / 2
+    top_ob_test['Spread'] = (top_ob_test['Ask_Price'] - top_ob_test['Bid_Price']) / top_ob_test['Mid_Price']
+    top_ob_test['merge_index'] = top_ob_test.reset_index().index.values # useful for merging later
+    print(f'Saving {top_ob_test_file}')
+    top_ob_test.to_csv(top_ob_test_file, compression='gzip') # # save top level not normalized to csv
+
+    return train_dyn_df, test_dyn_df, top_ob_train, top_ob_test
 
 
 # Model training - data preparation
