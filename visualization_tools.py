@@ -5,9 +5,47 @@ import plotly.figure_factory as ff
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+# Px timeseries
+def plot_timeseries(ts_list=[], primary_axis=[], legend=[], sample_size=360, width=900, height=500):
+    '''Plot nth datapoints for the provided timeseries
+
+    sample_size: integer. If input data is at 10s intervals, 30 would results in one datapoint
+        plotted every 5 minutes, 360 every hour and 8640 every day
+    ts_list, px_test: list of pandas timeseries with a datetime index
+    primary_axis: list with boolean specifying whether a timeseries will be plotted on the primary axis or not
+        If not specified, all timeseries will be plotted on primary axis
+    legend: list with strings specifying legend labels. If not specified, legend will not be shown
+    '''
+
+    # if primary_axis or legend have values, they must have same len as ts_list
+    if len(primary_axis)>0:
+        assert len(ts_list) == len(primary_axis), "Specify to which axis each timeseries belongs"
+    else:
+        primary_axis = [False for ts in range(len(ts_list))]
+    
+    if len(legend)>0:
+        assert len(ts_list) == len(legend), "Specify to which legend label each timeseries belongs"
+        show_legend = True
+    else:
+        legend = ['' for ts in range(len(ts_list))]
+        show_legend = False
+
+
+    ts_plot = make_subplots(specs=[[{"secondary_y": True}]]) # create chart
+    for ts, ax, leg in zip(ts_list, primary_axis, legend):
+        #print(isinstance(ts.index, pd.DatetimeIndex))
+        assert isinstance(ts.index, pd.DatetimeIndex), "px series must have a datetime index"
+        sampled_ts = ts.iloc[::sample_size]
+        ts_plot.add_trace(go.Scatter(y=sampled_ts.values, x=sampled_ts.index, name=leg), secondary_y=not ax) # toggle bool with *-1
+
+    ts_plot.update_yaxes(fixedrange= True, secondary_y=True)
+
+    ts_plot.update_layout(title='<b>Sampled mid</b>', showlegend=show_legend, width=width, height=height)
+    ts_plot.show()
+
 
 # Labels
-def plot_labels_line(px_ts, labels, title='Labels', **kwargs):
+def plot_labels_line(px_ts, labels, title='Labels', width=900, height=500, **kwargs):
     '''Plot labels against price.
     Takes two pandas timeseries as inputs. These need to be subsets of the same
     DataFrame or have same length
@@ -29,7 +67,7 @@ def plot_labels_line(px_ts, labels, title='Labels', **kwargs):
         else:
             fig.add_trace(go.Scatter(y=arg, x=arg.index, name=key), secondary_y=False)
 
-    fig.update_layout(title=f'<b>{title}</b>', width=1200, height=800)
+    fig.update_layout(title=f'<b>{title}</b>', width=width, height=height)
     fig.update_yaxes(title_text='ccy', fixedrange= False, secondary_y=False)
     fig.update_yaxes(title_text='label', secondary_y=True)
     #fig.update_yaxes(fixedrange= False)
@@ -82,7 +120,7 @@ def plot_trades_distribution(df_trades, bin_size=0.0001, metric='gross_returns',
 
 
 def plot_trades_length_overview(df_trades, x='trade_len',  y='gross_returns'):
-    ''' Plot visual insight for lavels on x variable (default "trade_len"):
+    ''' Plot visual insight for labels on x variable (default "trade_len"):
     1) histogram with count of x
     2) histogram with x vs average y (default "gross_returns")
     3) individual trades x vs y

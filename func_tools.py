@@ -61,19 +61,38 @@ def import_px_data(experiments_folder, frequency, pair, date_start, date_end, lo
         test_dyn_df = pd.read_csv(normalized_test_file, index_col=1)
 
         print(f'Reading cached {top_ob_train_file}')
-        top_ob_train = pd.read_csv(top_ob_train_file, index_col=1)
+        top_ob_train = pd.read_csv(top_ob_train_file, index_col=[0,1])
         print(f'Reading cached {top_ob_test_file}')
-        top_ob_test = pd.read_csv(top_ob_test_file, index_col=1)
-
-        return train_dyn_df, test_dyn_df, top_ob_train, top_ob_test
+        top_ob_test = pd.read_csv(top_ob_test_file, index_col=[0,1])
 
     else:
         input_data_folder = f'{experiments_folder}/input' # non standardized input data
         print(f'Reading {input_data_folder}/{input_file_name}')
         data = pd.read_csv(f'{input_data_folder}/{input_file_name}', index_col=0)
+        data['Datetime'] = pd.to_datetime(data['Datetime'])
         assert lob_depth == data['Level'].max() + 1 # number of levels of order book
 
-        return standardized_data_cache(data, roll, lob_depth, normalized_train_file, normalized_test_file, top_ob_train_file, top_ob_test_file)
+        train_dyn_df, test_dyn_df, top_ob_train, top_ob_test = standardized_data_cache(data, roll, lob_depth, normalized_train_file, normalized_test_file, top_ob_train_file, top_ob_test_file)
+
+    
+    # reset indexes, cast datetime type and clean unwanted columns
+    train_dyn_df = train_dyn_df.reset_index()
+    train_dyn_df['Datetime'] = pd.to_datetime(train_dyn_df['Datetime'])
+    train_dyn_df.drop('Unnamed: 0', axis=1, inplace=True)
+
+    test_dyn_df = test_dyn_df.reset_index()
+    test_dyn_df['Datetime'] = pd.to_datetime(test_dyn_df['Datetime'])
+    test_dyn_df.drop('Unnamed: 0', axis=1, inplace=True)
+
+    top_ob_train = top_ob_train.reset_index()
+    top_ob_train['Datetime'] = pd.to_datetime(top_ob_train['Datetime'])
+    top_ob_train.drop('Unnamed: 0.1', axis=1, inplace=True)
+
+    top_ob_test = top_ob_test.reset_index()
+    top_ob_test['Datetime'] = pd.to_datetime(top_ob_test['Datetime'])
+    top_ob_test.drop('Unnamed: 0.1', axis=1, inplace=True)
+
+    return train_dyn_df, test_dyn_df, top_ob_train, top_ob_test
 
 
 def standardized_data_cache(data, roll, lob_depth, normalized_train_file, normalized_test_file, top_ob_train_file, top_ob_test_file):
@@ -224,70 +243,6 @@ def reshape_lob_levels(z_df, output_type='array'):
         depth_values = reshaped_z_df.values # numpy array ready to be used as input for cnn_data_reshaping
         return depth_values, dt_index
 
-    
-
-def label_insights(labels):
-    '''
-    Take a np.array of labels as an input and return
-    insights into number of labels, transactions, imbalance
-    labels has to be one dimentional ie: (labels.shape, )
-    '''
-
-    # get for how long labels are "in the market"
-    unique_labels, counts_labels = np.unique(labels, return_counts=True)
-    percent_labels = counts_labels / counts_labels.sum()
-    a_ext = np.concatenate(( [0], labels.values, [0])) # extend array for comparison
-    idx = np.flatnonzero(a_ext[1:] != a_ext[:-1]) # non zero indices - transactions
-
-    print(f'Labels shape: {labels.shape}')
-    print(f'Labels: {unique_labels} \nCount: {counts_labels} \nPctg: {percent_labels}')
-    print(f'Number of trades: {idx.shape[0]}')
-
-    return idx.shape[0]
-
-
-# Backtesting
-def get_strategy_pnl(px_ts, labels):
-    
-    df = pd.merge(px_ts, labels, left_index=True, right_index=True) # default how is inner
-    df.index = np.arange(0,df.shape[0])
-    df.columns = ['px', 'labels']
-
-    labels_ext = np.concatenate(( [0], labels.values, [0])) # extend array for comparison
-    idx = np.flatnonzero(labels_ext[1:] != labels_ext[:-1]) # verify if alignement is correct
-    # non zero indices - remove last. Avoid errors when transaction occurs on last label
-    if idx[-1] >= df.shape[0]:
-        idx = idx[:-1] 
-
-    df['log_ret'] = np.log(df['px']) - np.log(df['px'].shift(1))#df['px'].pct_change()#np.log(df['px']) - np.log(df['px'].shift(1))
-    df['individual_return'] = df['log_ret'] * df['labels']# need to add +1 to multiply with tr feee
-
-    # auxiliary column to perform groupby and get rough profit estimate
-    df['trade_grouper'] = np.nan
-    df['trade_grouper'].loc[idx] = idx
-    df['trade_grouper'] = df['trade_grouper'].fillna(method='ffill')
-
-    # series with trade length filled across the df
-    df['trade_len'] = df.groupby(['labels', 'trade_grouper'])['px'].transform('count')
-
-    # calculate profits
-    trade_gross_profit = pd.Series(df.groupby('trade_grouper')['individual_return'].sum(), name='gross_returns') # each grouper represents a trade
-    # add gross returns at the beginning of each trade in df
-    df = pd.merge(df, trade_gross_profit, left_index=True, right_index=True, how='outer')
-
-    #average profit
-    trades_df = df[df['labels']!=0]
-    n_trades = trades_df['gross_returns'].count()
-    tot_return = trades_df['gross_returns'].sum()
-    avg_return = trades_df['gross_returns'].mean()
-
-    print(f'''Total non zero trades: {n_trades}, sum of returns: {tot_return:.2f}, average return: {avg_return:.6f}''')
-
-
-    # df['cleaned_labels'] = 0 # create column with all 0 labels
-    # df['cleaned_labels'].loc[positive_df_idx] = df['labels'].loc[positive_df_idx] # replace 0s with labels of positive trades
-    
-    return df
 
 
 # Evaluate model preditctions

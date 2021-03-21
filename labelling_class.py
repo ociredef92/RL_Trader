@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import scipy.signal
 from sklearn.preprocessing import MinMaxScaler
-from func_tools import get_strategy_pnl
+
 
 class Labels_Generator:
 
@@ -72,6 +72,103 @@ class Labels_Generator:
         self.labels = cleaned_labels.fillna(method='ffill')
 
         return df_trades
+
+def get_strategy_pnl(px_ts, labels):
+    
+    df = pd.merge(px_ts, labels, left_index=True, right_index=True) # default how is inner
+    df.index = np.arange(0,df.shape[0])
+    df.columns = ['px', 'labels']
+
+    labels_ext = np.concatenate(( [0], labels.values, [0])) # extend array for comparison
+    idx = np.flatnonzero(labels_ext[1:] != labels_ext[:-1]) # verify if alignement is correct
+    # non zero indices - remove last. Avoid errors when transaction occurs on last label
+    if idx[-1] >= df.shape[0]:
+        idx = idx[:-1] 
+
+    df['log_ret'] = np.log(df['px']) - np.log(df['px'].shift(1))#df['px'].pct_change()#np.log(df['px']) - np.log(df['px'].shift(1))
+    df['individual_return'] = df['log_ret'] * df['labels']# need to add +1 to multiply with tr feee
+
+    # auxiliary column to perform groupby and get rough profit estimate
+    df['trade_grouper'] = np.nan
+    df['trade_grouper'].loc[idx] = idx
+    df['trade_grouper'] = df['trade_grouper'].fillna(method='ffill')
+
+    # series with trade length filled across the df
+    df['trade_len'] = df.groupby(['labels', 'trade_grouper'])['px'].transform('count')
+
+    # calculate profits
+    trade_gross_profit = pd.Series(df.groupby('trade_grouper')['individual_return'].sum(), name='gross_returns') # each grouper represents a trade
+    # add gross returns at the beginning of each trade in df
+    df = pd.merge(df, trade_gross_profit, left_index=True, right_index=True, how='outer')
+
+    #average profit
+    trades_df = df[df['labels']!=0]
+    n_trades = trades_df['gross_returns'].count()
+    tot_return = trades_df['gross_returns'].sum()
+    avg_return = trades_df['gross_returns'].mean()
+
+    print(f'''Total non zero trades: {n_trades}, sum of returns: {tot_return:.2f}, average return: {avg_return:.6f}''')
+
+
+    # df['cleaned_labels'] = 0 # create column with all 0 labels
+    # df['cleaned_labels'].loc[positive_df_idx] = df['labels'].loc[positive_df_idx] # replace 0s with labels of positive trades
+    
+    return df
+
+def label_insights(labels):
+    '''
+    Take a np.array of labels as an input and return
+    insights into number of labels, transactions, imbalance
+    labels has to be one dimentional ie: (labels.shape, )
+    '''
+
+    # get for how long labels are "in the market"
+    unique_labels, counts_labels = np.unique(labels, return_counts=True)
+    percent_labels = counts_labels / counts_labels.sum()
+    a_ext = np.concatenate(( [0], labels.values, [0])) # extend array for comparison
+    idx = np.flatnonzero(a_ext[1:] != a_ext[:-1]) # non zero indices - transactions
+
+    print(f'Labels shape: {labels.shape}')
+    print(f'Labels: {unique_labels} \nCount: {counts_labels} \nPctg: {percent_labels}')
+    print(f'Number of trades: {idx.shape[0]}')
+
+    return idx.shape[0]
+
+
+def cleaned_labels(target_timeseries, method='three_steps', print_details=True):
+    '''
+    Wrapper that execute all the steps for a given method
+    target_timeseries -- pandas series
+    '''
+    labels_gen = Labels_Generator(target_timeseries)
+
+    if method == 'three_steps':
+
+        #step 1
+        labels_gen.get_raw_labels()
+        if print_details:
+            print('\n##### Step 1 #####')
+            label_insights(labels_gen.labels)
+
+        # step 2 - first cleaning
+        _ = labels_gen.get_cleaned_labels(fillna_method='ffill', gross_returns=0.005, trade_len=20)
+        if print_details:
+            print('\n##### Step 2 #####')
+            label_insights(labels_gen.labels)
+
+        # step 3 - second cleaning
+        df_trades = labels_gen.get_cleaned_labels(fillna_value=0, gross_returns=0.005, trade_len=30)#, gross_returns=0.002)
+        if print_details:    
+            print('\n##### Step 3 #####')
+            label_insights(labels_gen.labels)
+
+        labels = labels_gen.labels
+
+        return labels, labels_gen.get_smooth_px(), df_trades
+
+    else:
+        raise ValueError(f"Method {method} not recognized")
+
 
 
 def three_barrier_labelling(mix_px, h=700, factor=[1.0020, 0.9980]):
