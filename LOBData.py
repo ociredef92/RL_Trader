@@ -69,7 +69,6 @@ class LOBData:
                     for filename in os.listdir(f'{self.raw_data_path}/{self.security}/{day_folder}'):
                         #print(f'Reading {self.security}/{filename}')
                         raw_data_temp = self.load_data_file(f'{self.raw_data_path}/{self.security}/{day_folder}/{filename}')
-
                         raw_data.update(raw_data_temp)
 
                     # number of seconds in a day / frequencey in seconds
@@ -99,6 +98,7 @@ class LOBData:
                     # Convert hierarchical json data in to tabular format
                     levels = list(range(self.levels))
                     for row in raw_data_frame.itertuples():
+
                         ask_price, ask_volume = zip(* row.asks[0:self.levels])
                         bid_price, bid_volume = zip(* row.bids[0:self.levels])
                         sequences = [row.seq] * self.levels
@@ -191,15 +191,19 @@ class LOBData:
                 fixed_json_string = json_string[:e.pos] + json_string[next_comma:]
             return self.load_json(fixed_json_string)
 
+        for key, value in list(json_object.items()):
+            if not value['bids'] or not value['asks']:
+                del json_object[key]
+
         return json_object
 
 # TODO add method which returns data with different frequency
 
-root_path = '/home/pawel/Documents/LOB-data/mixed' # path where zipped files are stored
-root_caching_folder = '/home/pawel/Documents/LOB-data/cache2' # processed cached data folder
+root_path = '/home/pawel/Documents/LOB-data/new-format' # path where zipped files are stored
+root_caching_folder = '/home/pawel/Documents/LOB-data/cache-new-format' # processed cached data folder
 security = 'USDT_BTC'
 
-data = LOBData(root_path, security, root_caching_folder, timedelta(seconds=10), 15)
+data = LOBData(root_path, security, root_caching_folder, timedelta(seconds=3), 10)
 df = data.get_data()
 print('DataFrame loaded')
 # computed = df.compute()
@@ -213,7 +217,7 @@ print('DataFrame loaded')
 start_date = datetime.strftime(data.start_date, '%Y_%m_%d')
 end_date = datetime.strftime(data.end_date, '%Y_%m_%d')
 
-output_file_name = f'{security}--15lev--10sec--{start_date}--{end_date}.csv.gz'
+output_file_name = f'{security}--10lev--3sec--{start_date}--{end_date}.csv.gz'
 df.to_csv(f'{root_caching_folder}/{security}/{output_file_name}', compression='gzip', single_file = True)
 print('Saved CSV')
 
