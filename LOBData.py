@@ -18,7 +18,7 @@ class LOBData:
         self.security = security
         self.frequency = frequency
         self.caching_folder = f'{root_caching_folder}/{security}'
-        self.cache_file = f'{self.caching_folder}/data-cache-1m.csv'
+        self.cache_file = f'{self.caching_folder}/test-data-cache-1m.csv'
         self.levels = levels
 
         os.makedirs(self.caching_folder, exist_ok=True)
@@ -91,27 +91,11 @@ class LOBData:
             with gzip.open(path_string, 'r') as f:  # gzip
                 json_bytes = f.read()               # bytes
                 json_string = json_bytes.decode('utf-8')
-            one_hour_data = json.loads(json_string)
 
-        # TODO handle multiple errors in a single file with loop or recursion
-        except json.JSONDecodeError as e:
-            print(f'Malformed JSON in file {path_string} at position {e.pos}')
-            fixed_json_string = self.fix_malformed_json(json_string, e)
-            try: 
-                one_hour_data = json.loads(fixed_json_string)
-
-            except json.JSONDecodeError as e:
-                print(f'Malformed JSON in file {path_string} at position {e.pos}')
-                fixed_json_string = self.fix_malformed_json(fixed_json_string, e)
-                try: 
-                    one_hour_data = json.loads(fixed_json_string)
-
-                except json.JSONDecodeError as e:
-                    print(f'Malformed JSON in file {path_string} at position {e.pos}')
-                    fixed_json_string = self.fix_malformed_json(fixed_json_string, e)
-
-                    one_hour_data = json.loads(fixed_json_string)
-
+                frozen = json_string.count('"isFrozen": "1"')
+                if frozen > 0:
+                    print(f'Frozen {frozen} snapshots')
+            one_hour_data = self.load_json(json_string)
 
         except IOError as e:
             print(e.errno)
@@ -124,32 +108,56 @@ class LOBData:
 
         return one_hour_data
 
-    def fix_malformed_json(self, json_string, e):
+    def load_json(self, json_string):
+        try:
+            json_object = json.loads(json_string)
 
-        if e.msg == 'Expecting value':
-            # it's malformed like this:
-            # 5634},"BTC_ETH-20200903_095550": ,"BTC_ETH-20200903_095600": {"as
-            
-            prev_snapshot_start = json_string.rindex('{', 0, e.pos)
-            prev_snapshot_end = json_string.rindex('}', 0, e.pos) + 1
-            prev_snapshot = json_string[prev_snapshot_start:prev_snapshot_end]
-            fixed_json_string = json_string[:e.pos] + prev_snapshot + json_string[e.pos:]
+        except json.JSONDecodeError as e:
+            print(f'Malformed JSON in file at position {e.pos}')
 
-        else:
-            # it's malformed like this:
-            # "seq": 933840511}": 933840515},"BTC_ET
-            # "seq": 934014002}4001},"BTC_
+            if '}0254}' in json_string:
+                fixed_json_string = json_string.replace('}0254}', '}')
+                return self.load_json(fixed_json_string)
 
-            next_comma = json_string.index(',', e.pos)
-            fixed_json_string = json_string[:e.pos] + json_string[next_comma:]
+            if e.msg == 'Expecting value':
+                prev_snapshot_start = json_string.rindex('{', 0, e.pos)
 
-        # zipped = gzip.compress(fixed_json_string.encode('utf-8'))
-        # with open(path_string, 'wb') as archive_file:
-        #     archive_file.write(zipped)
+                if prev_snapshot_start == 0:
+                    # {"BTC_ETH-20201008_030000": ,"BTC_ETH-20201008_030010": {"asks
+                    fixed_json_string = json_string[:1] + json_string[e.pos+1:]
 
-        return fixed_json_string
+                else:
+                    # 5634},"BTC_ETH-20200903_095550": ,"BTC_ETH-20200903_095600": {"as
+                    prev_snapshot_end = json_string.rindex('}', 0, e.pos) + 1
+                    #prev_snapshot = json_string[prev_snapshot_start:prev_snapshot_end]
+                    fixed_json_string = json_string[:prev_snapshot_end] + json_string[e.pos:]
+
+            elif e.msg == 'Extra data':
+                if json_string[e.pos-2:e.pos] == '}}':
+
+                    print(json_string[e.pos-12:e.pos+12])
+
+                    # 922}},"BTC_
+                    #fixed_json_string = json_string[:e.pos-1] + json_string[e.pos:]
+                    fixed_json_string = json_string.replace('}}', '}') + '}' # at the end should be }}
+                    #print(fixed_json_string[e.pos-13112:e.pos+13112])
+
+                else:
+                    # en": "0", "seq": 945674867}, "seq": 945674845},"BTC_ETH-20
+                    previous_comma = json_string.rindex(',', 0, e.pos)
+                    fixed_json_string = json_string[:previous_comma] + json_string[e.pos:]
+
+            else:
+                # "seq": 933840511}": 933840515},"BTC_ET
+                # "seq": 934014002}4001},"BTC_
+                next_comma = json_string.index(',', e.pos)
+                fixed_json_string = json_string[:e.pos] + json_string[next_comma:]
+            return self.load_json(fixed_json_string)
+
+        return json_object
 
 # TODO add method which returns data with different frequency
+
 
 # root_path = '/home/pawel/Documents/LOB-data/new' # path where zipped files are stored
 # root_caching_folder = '/home/pawel/Documents/LOB-data/cache' # processed cached data folder
@@ -158,6 +166,7 @@ class LOBData:
 # # instantiate class
 # data = LOBData(root_path, security, root_caching_folder)
 # df = data.get_LOB_data()
+
 
 # print(df.shape)
 
