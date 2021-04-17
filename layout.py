@@ -20,22 +20,6 @@ controls_px = dbc.Card(
             ]
         ),
 
-        #dbc.FormGroup(
-        #    [
-        #        dbc.Label("Select Chart Type"),
-        #        dcc.RadioItems(
-        #            id='chart_type_radio',
-        #            options=[
-        #                {'label': 'Candlestick', 'value': 'Candlestick'},
-        #                {'label': 'Line', 'value': 'Line'},
-        #            ],
-        #            value='Line',
-        #            labelStyle={'display': 'inline-block'},
-        #        )
-
-        #    ]
-        #),
-
         dbc.FormGroup(
             [
                 dbc.Label("Select Date Range"),
@@ -82,58 +66,94 @@ controls = dbc.Card(
         ),
 
         html.Hr(),
+
+        html.H5("Order Book Levels"),
+        dbc.FormGroup(
+            [
+                dbc.Label(hidden=True),
+
+                dcc.Dropdown(
+                    id="ob_levels",
+                    options=[
+                        {"label": levels, "value": levels} for levels in range(0,100)
+                    ],
+                    value=10,
+                ),
+            ]
+        ),
+
+        html.Hr(),
         html.H5("Normalization"),
         dbc.FormGroup(
             [
                 dbc.Label(hidden=True),
 
-                dcc.Checklist(
-                    id='normalization_type',
-                    options=[
-                        {'label': 'price', 'value': 'price'},
-                        {'label': 'z-score', 'value': 'z_score'},
-                        {'label': 'dynamic z-score', 'value': 'dyn_z_score'}
-                    ],
-                    value=['price'],
-                    labelStyle={'display': 'inline-block'}
-                ),
+
+                # dcc.Checklist(
+                #     id='normalization_type',
+                #     options=[
+                #         {'label': 'price', 'value': 'price'},
+                #         {'label': 'z-score', 'value': 'z_score'},
+                #         {'label': 'dynamic z-score', 'value': 'dyn_z_score'}
+                #     ],
+                #     value=['price'],
+                #     labelStyle={'display': 'inline-block'}
+                # ),
 
                 dcc.Slider(
                     id='normalization_window',
                     min=0,
-                    max=2880,
+                    max=14400,
                     step=1,
-                    value=720,
+                    value=7200,
                     marks={
                             0: {'label': '0'},
-                            144: {'label': '1d'},
-                            288: {'label': '2d'},
-                            720: {'label': '5d'},
-                            1440: {'label': '10d'},
-                            2880: {'label': '20d'}
+                            # 120: {'label': '120'},
+                            # 600: {'label': '600'},
+                            1440: {'label': '1440'},
+                            7200: {'label': '7200'},
+                            14400: {'label': '14400'}
+                            
                         }
                 ),
             ]
         ),
 
         html.Hr(),
-        html.H5("Labelling"),
-        dbc.FormGroup(
-            [
+        
+            
+            dbc.FormGroup(
+                [   
+                dbc.Row([
+                    dbc.Col(html.H5("Labelling"), md=4),
+                    dbc.Col(
+                        dcc.RadioItems(
+                            id='label_switch_on',
+                            options=[
+                                {'label': 'On', 'value': 'on'},
+                                {'label': 'Off', 'value': 'off'}
+                            ],
+                            value='off',
+                            labelStyle={'display': 'inline-block'}
+                        ),
+                        md=8)
+                ]
+                ),
 
+                dbc.Label("Long Short Label Strategy"),
                 dcc.RadioItems(
-                    id='label_switch_on',
+                    id='long_only_pnl',
                     options=[
-                        {'label': 'On', 'value': 'on'},
-                        {'label': 'Off', 'value': 'off'}
+                        {'label': 'long only', 'value': 'long'},
+                        {'label': 'long-short', 'value': 'long_short'}
                     ],
-                    value='off',
+                    value='long',
                     labelStyle={'display': 'inline-block'}
                 ),
 
-                dbc.Label("Momentum Window", id='print_mom_window'),
+                dbc.Label("K Plus", id='print_k_plus_window'),
                 dcc.Slider(
-                    id='momentum_window',
+                    id='k_plus',
                     min=0,
                     max=120,
                     step=1,
@@ -148,7 +168,24 @@ controls = dbc.Card(
                             120:{'label': '20h'}
                         }
                 ),
-                #html.P(id='print_mom_window')
+
+                dbc.Label("K Minus", id='print_k_minus_window'),
+                dcc.Slider(
+                    id='k_minus',
+                    min=0,
+                    max=120,
+                    step=1,
+                    value=18,
+                    marks={
+                            0: {'label': '0'},
+                            6: {'label': '1h'},
+                            12: {'label': '2h'},
+                            18: {'label': '3h'},
+                            30: {'label': '5h'},
+                            60: {'label': '10h'},
+                            120:{'label': '20h'}
+                        }
+                ),
             ]
         ),
 
@@ -179,20 +216,9 @@ controls = dbc.Card(
         html.H5("Labels Theoretical P&L"),
         dbc.FormGroup(
             [
-                dbc.Label(hidden=True),
-
-                dcc.RadioItems(
-                    id='ls_pnl',
-                    options=[
-                        {'label': 'long only', 'value': 'long'},
-                        {'label': 'long-short', 'value': 'long_short'}
-                    ],
-                    value='long',
-                    labelStyle={'display': 'inline-block'}
-                ),
-                dbc.Label("Transaction Costs: ", id='print_tr_cost_bps'),
+                dbc.Label("Transaction Costs: ", id='print_tr_fee_bps'),
                 dcc.Slider(
-                    id='tr_costs',
+                    id='tr_fee_bps',
                     min=0,
                     max=100,
                     step=1,
@@ -206,6 +232,7 @@ controls = dbc.Card(
                             100: {'label': '100'}
                         }
                 ),
+                dcc.Graph(id='pnl')
             ]
         ),
 
@@ -221,18 +248,18 @@ user_interface = dbc.Container(
 
         dbc.Row(
             [
-                dbc.Col([controls], md=4),
-                dbc.Col(dcc.Graph(id="price_chart"), md=8),
+                dbc.Col([controls], width='auto'),#, lg=2, md=4, sm=6),
+                dbc.Col(dcc.Graph(id="price_chart"), lg=8, md=8),
             ],
                 align="start",
         ),
 
-        dbc.Row(
-            [
-                dbc.Col(dcc.Graph(id="depth_chart"), md=12),
-            ],
-            align="center",
-        ),
+        # dbc.Row(
+        #     [
+        #         dbc.Col(dcc.Graph(id="depth_chart"), md=12),
+        #     ],
+        #     align="center",
+        # ),
                 
 
     ],
