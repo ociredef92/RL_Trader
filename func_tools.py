@@ -1,6 +1,9 @@
 import numpy as np
 import pandas as pd
+from datetime import datetime
 import os
+from os import listdir
+from os.path import isfile, join
 
 def intraday_vol_ret(px_ts, span=100):
     '''
@@ -22,6 +25,10 @@ def intraday_vol_ret(px_ts, span=100):
     return ret, vol
 
 # Higher level workflow function to keep notebooks tidy
+# 1) import_px_data looks for standardized cached files in Experiments/cache (top ob train/test and depth train/test)
+# 2) if no file is found it would import the CSV for the non std file from Experiments/input
+# 3) the loaded file is passed to standardized_data_cache() which uses standardize() to actual perform standardization
+
 def import_px_data(experiments_folder, frequency, pair, date_start, date_end, lob_depth, norm_type, roll):
     '''
     Function that loads preprocessed data ready to be shaped/used for the model to train.
@@ -30,7 +37,7 @@ def import_px_data(experiments_folder, frequency, pair, date_start, date_end, lo
     in the "else" block
 
     Arguments:
-    experiments_folder -- string, path where standardized data is stored
+    experiments_folder -- string, path where standardized and compact non-standardized data is stored
     frequency --  timedelta, the minimum time granularity (e.g. timedelta(seconds=10))
     pair -- string, pair to be uploaded (e.g.'USDT_BTC')
     date_start -- string, timeseries start
@@ -45,14 +52,15 @@ def import_px_data(experiments_folder, frequency, pair, date_start, date_end, lo
     os.makedirs(f'{cache_folder}/{pair}', exist_ok=True)
 
     # Data import - needs to be adjusted importing from several files using Dask
-    input_file_name = f'{pair}--{lob_depth}lev--{frequency_seconds}sec--{date_start}--{date_end}.csv.gz'
+    quotes_file_name = f'{pair}--{lob_depth}lev--{frequency_seconds}sec--{date_start}--{date_end}.csv.gz'
 
-    normalized_train_file = f'{cache_folder}/{pair}/TRAIN--{norm_type}-{roll}--{input_file_name}'
-    normalized_test_file = f'{cache_folder}/{pair}/TEST--{norm_type}-{roll}--{input_file_name}'
+    normalized_train_file = f'{cache_folder}/{pair}/TRAIN--{norm_type}-{roll}--{quotes_file_name}'
+    normalized_test_file = f'{cache_folder}/{pair}/TEST--{norm_type}-{roll}--{quotes_file_name}'
 
-    top_ob_train_file = f'{cache_folder}/{pair}/TRAIN_TOP--{input_file_name}'
-    top_ob_test_file = f'{cache_folder}/{pair}/TEST_TOP--{input_file_name}'
+    top_ob_train_file = f'{cache_folder}/{pair}/TRAIN_TOP--{quotes_file_name}'
+    top_ob_test_file = f'{cache_folder}/{pair}/TEST_TOP--{quotes_file_name}'
 
+    # normalized test file contains both trades and quotes
     if os.path.isfile(normalized_test_file): # testing for one of cache files, assuming all were saved
         # Import cached standardized data
         print(f'Reading cached {normalized_train_file}')
@@ -65,16 +73,36 @@ def import_px_data(experiments_folder, frequency, pair, date_start, date_end, lo
         print(f'Reading cached {top_ob_test_file}')
         top_ob_test = pd.read_csv(top_ob_test_file, index_col=[0,1])
 
-    else:
+    else: # check separately for quotes and trades input files
         input_data_folder = f'{experiments_folder}/input' # non standardized input data
-        print(f'Reading {input_data_folder}/{input_file_name}')
-        data = pd.read_csv(f'{input_data_folder}/{input_file_name}', index_col=0)
-        data['Datetime'] = pd.to_datetime(data['Datetime'])
-        assert lob_depth == data['Level'].max() + 1 # number of levels of order book
 
+        ## check if quotes file exist in input folder
+        if os.path.isfile(f'{input_data_folder}/{quotes_file_name}'):
+            print(f'Reading {input_data_folder}/{quotes_file_name}')
+            data = pd.read_csv(f'{input_data_folder}/{quotes_file_name}', index_col=0)
+            data['Datetime'] = pd.to_datetime(data['Datetime'])
+            assert lob_depth == data['Level'].max() + 1 # number of levels of order book - maybe add extra + 1 for trades
+
+        
+        else:
+            # create non standardized input file using LOB data
+            # this block will return data just created from LOBData
+                pass
+
+        # check if input file for trades file exists
+        trades_file_name = f'{pair}-trades-{frequency_seconds}sec-{date_start}-{date_end}.csv.gz'
+        if os.path.isfile(f'{input_data_folder}/{trades_file_name}'):
+            print(f'Reading {input_data_folder}/{trades_file_name}')
+            trades_data = pd.read_csv(f'{input_data_folder}/{trades_file_name}')
+            trades_data['date'] = pd.to_datetime(trades_data['date'])
+
+        else:
+            # create non standardized input trades file using the function below
+            # this block will return data just created from LOBData
+
+        # once input files have been correctly read from the input folder, it's time to create a single standardized cache for trades and quotes
         train_dyn_df, test_dyn_df, top_ob_train, top_ob_test = standardized_data_cache(data, roll, lob_depth, normalized_train_file, normalized_test_file, top_ob_train_file, top_ob_test_file)
 
-    
     # reset indexes, cast datetime type and clean unwanted columns
     train_dyn_df = train_dyn_df.reset_index()
     train_dyn_df['Datetime'] = pd.to_datetime(train_dyn_df['Datetime'])
@@ -103,6 +131,9 @@ def standardized_data_cache(data, roll, lob_depth, normalized_train_file, normal
 
     train_cached_data = data[data['Datetime'].isin(train_timestamps)].set_index(['Datetime', 'Level'])
     test_cached_data = data[data['Datetime'].isin(test_timestamps)].set_index(['Datetime', 'Level'])
+
+    ### trades managed here before standardization
+
 
     print(f'Train dataset shape: {train_cached_data.shape} - Test dataset shape: {test_cached_data.shape}')
 
@@ -145,12 +176,13 @@ def standardized_data_cache(data, roll, lob_depth, normalized_train_file, normal
 
 
 # Model training - data preparation
-def standardize(ts, ob_levels,norm_type='z_score', roll=0):
+def standardize(ts, ob_levels, norm_type='z_score', roll=0):
     '''
     Function to standardize (mean of zero and unit variance) timeseries
 
     Arguments:
     ts -- pandas series or df having timestamp and ob level as index to allow sorting (dynamic z score)
+    ob_levels -- number of ob levels analyzed
     norm_type -- string, can assume values of 'z' or 'dyn' for z-score or dynamic z-score
     roll -- integer, rolling window for dyanamic normalization.
 
@@ -187,6 +219,48 @@ def standardize(ts, ob_levels,norm_type='z_score', roll=0):
     else:
         print('Normalization not perfmed, please check your code')
 
+
+def fetch_s3_trade_files(s3_folder, input_data_folder, pair, frequency):
+    s3_trades_folder = f'{s3_folder}/trades'
+
+    # series with dates of all the files present in the folder
+    trade_files = pd.Series([datetime.strptime(f[:-7][-8:], '%Y%m%d') for f in listdir(f'{s3_trades_folder}/{pair}') if isfile(join(f'{s3_trades_folder}/{pair}', f))])
+
+    # create date range from newest to oldedst trade file
+    dates = pd.date_range(start=trade_files.min(), end=trade_files.max(), freq='D').strftime(date_format='%Y%m%d')
+
+    # read trades
+    print('reading trade files')
+    df_trades = pd.DataFrame([])
+    for date in dates:
+        df_trades = pd.concat([df_trades, pd.read_csv(f'{s3_trades_folder}/{pair}/{pair}-{date}.csv.gz')])
+
+    destination_path = f"{input_data_folder}/{pair}-trades-{int(frequency.total_seconds())}s-{trade_files.min().strftime(format='%Y_%m_%d')}-{trade_files.max().strftime(format='%Y_%m_%d')}.csv.gz"
+    print(f'saving file at {destination_path}')
+    df_trades.to_csv(destination_path, compression='gzip')
+    return df_trades
+
+
+def process_s3_trade_files():
+    # 
+    # df_trades['date'] = pd.to_datetime(df_trades['date'])
+    # df_trades_grp = df_trades.groupby([pd.Grouper(key='date', freq='10s', dropna=False), 'type']).agg({'amount':'sum', 'rate':'mean'}).reset_index()
+    # df_trades_piv = df_trades_grp.pivot(values=['amount', 'rate'], columns='type',index='date').reset_index()
+
+    # df_trades_piv.columns = list(map("_".join, df_trades_piv.columns)) # "flatten" column names
+    # df_trades_piv.rename(columns={'date_':'Datetime', 'amount_buy':'Ask_Size', 'amount_sell':'Bid_Size', 'rate_buy':'Ask_Price', 'rate_sell':'Bid_Price'}, inplace=True)
+
+    # # fill gaps with no trades
+    # date_range_reindex = pd.DataFrame(pd.date_range(df_trades_piv['Datetime'].min(), df_trades_piv['Datetime'].max(), freq="10s"), columns=['Datetime'])
+    # df_trades_piv = pd.merge(df_trades_piv, date_range_reindex, right_on='Datetime', left_on='Datetime', how='right')
+
+    # # impute NAs - zero for size and last px for price
+    # df_trades_piv.loc[:,['Ask_Size', 'Bid_Size']] = df_trades_piv.loc[:,['Ask_Size', 'Bid_Size']].fillna(0)
+    # df_trades_piv.loc[:,['Ask_Price', 'Bid_Price']] = df_trades_piv.loc[:,['Ask_Price', 'Bid_Price']].fillna(method='ffill')
+
+
+    # df_trades_piv['Level'] = -1
+    pass
 
 def cnn_data_reshaping(X, Y, T):
     '''

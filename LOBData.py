@@ -199,26 +199,26 @@ class LOBData:
 
 # TODO add method which returns data with different frequency
 
-root_path = '/home/pawel/Documents/LOB-data/new-format' # path where zipped files are stored
-root_caching_folder = '/home/pawel/Documents/LOB-data/cache-new-format' # processed cached data folder
-security = 'USDT_BTC'
+# root_path = '/home/pawel/Documents/LOB-data/new-format' # path where zipped files are stored
+# root_caching_folder = '/home/pawel/Documents/LOB-data/cache-new-format' # processed cached data folder
+# security = 'USDT_BTC'
 
-data = LOBData(root_path, security, root_caching_folder, timedelta(seconds=3), 10)
-df = data.get_data()
-print('DataFrame loaded')
-# computed = df.compute()
-# print(computed.shape)
-# print(computed.head())
-# print(computed.tail())
+# data = LOBData(root_path, security, root_caching_folder, timedelta(seconds=3), 10)
+# df = data.get_data()
+# print('DataFrame loaded')
+# # computed = df.compute()
+# # print(computed.shape)
+# # print(computed.head())
+# # print(computed.tail())
 
 
-# df = df.repartition(npartitions=1)
+# # df = df.repartition(npartitions=1)
 
-start_date = datetime.strftime(data.start_date, '%Y_%m_%d')
-end_date = datetime.strftime(data.end_date, '%Y_%m_%d')
+# start_date = datetime.strftime(data.start_date, '%Y_%m_%d')
+# end_date = datetime.strftime(data.end_date, '%Y_%m_%d')
 
-output_file_name = f'{security}--10lev--3sec--{start_date}--{end_date}.csv.gz'
-df.to_csv(f'{root_caching_folder}/{security}/{output_file_name}', compression='gzip', single_file = True)
-print('Saved CSV')
+# output_file_name = f'{security}--10lev--3sec--{start_date}--{end_date}.csv.gz'
+# df.to_csv(f'{root_caching_folder}/{security}/{output_file_name}', compression='gzip', single_file = True)
+# print('Saved CSV')
 
 #df.to_parquet(f'/tmp/10-seconds.parquet', compression='gzip', engine='pyarrow', write_index=False)
