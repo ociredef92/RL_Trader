@@ -11,7 +11,7 @@ def config():
     Can be used like this:
 
     config = config()
-    raw_lob_data_folder = config['folders']['raw_lob_data_folder']
+    raw_lob_data_folder = config['folders']['raw_lob_data']
 
     Returns: ConfigParser object
     '''
@@ -23,9 +23,10 @@ def config():
 
     else:
         config['folders'] = {
-            'experiments_folder': '~/Experiments',
-            'raw_lob_data_folder': '~/Experiments/input/raw/LOB',
-            'raw_trades_data_folder': '~/Experiments/input/trades'
+            'experiments': '~/Experiments',
+            'cache': '~/Experiments/cache',
+            'raw_lob_data': '~/Experiments/input/raw/LOB',
+            'raw_trades_data': '~/Experiments/input/trades'
             }
 
         with open('config.ini', 'w') as configfile:    # save
