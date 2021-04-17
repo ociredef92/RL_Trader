@@ -1,6 +1,37 @@
 import numpy as np
 import pandas as pd
 import os
+import configparser
+
+def config():
+    '''
+    Function that returns project configuration.
+    If there is no config.ini file in project root folder it creates it.
+    If this file exists it loads an existing configuration.
+    Can be used like this:
+
+    config = config()
+    raw_lob_data_folder = config['folders']['raw_lob_data_folder']
+
+    Returns: ConfigParser object
+    '''
+
+    config = configparser.ConfigParser()
+
+    if os.path.isfile('config.ini'):
+        config.read('config.ini')
+
+    else:
+        config['folders'] = {
+            'experiments_folder': '~/Experiments',
+            'raw_lob_data_folder': '~/Experiments/input/raw/LOB',
+            'raw_trades_data_folder': '~/Experiments/input/trades'
+            }
+
+        with open('config.ini', 'w') as configfile:    # save
+            config.write(configfile)
+
+    return config
 
 def intraday_vol_ret(px_ts, span=100):
     '''
