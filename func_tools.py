@@ -24,9 +24,9 @@ def config():
     else:
         config['folders'] = {
             'experiments': '~/Experiments',
-            'cache': '~/Experiments/cache',
-            'raw_lob_data': '~/Experiments/input/raw/LOB',
-            'raw_trades_data': '~/Experiments/input/trades'
+            'resampled': '~/Experiments/resampled',
+            'raw_lob_data': '~/Experiments/input/raw/lob',
+            'raw_trades_data': '~/Experiments/input/raw/trades'
             }
 
         with open('config.ini', 'w') as configfile:    # save
