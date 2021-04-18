@@ -29,7 +29,7 @@ def intraday_vol_ret(px_ts, span=100):
 # 2) if no file is found it would import the CSV for the non std file from Experiments/input
 # 3) the loaded file is passed to standardized_data_cache() which uses standardize() to actual perform standardization
 
-def import_px_data(experiments_folder, frequency, pair, date_start, date_end, lob_depth, norm_type, roll):
+def import_px_data(experiments_folder, frequency, pair, date_start, date_end, lob_depth, norm_type, roll, s3_folder):
     '''
     Function that loads preprocessed data ready to be shaped/used for the model to train.
     Experiment folder is the path where data has been cached. The other parameters are part of the
@@ -79,28 +79,32 @@ def import_px_data(experiments_folder, frequency, pair, date_start, date_end, lo
         ## check if quotes file exist in input folder
         if os.path.isfile(f'{input_data_folder}/{quotes_file_name}'):
             print(f'Reading {input_data_folder}/{quotes_file_name}')
-            data = pd.read_csv(f'{input_data_folder}/{quotes_file_name}', index_col=0)
-            data['Datetime'] = pd.to_datetime(data['Datetime'])
-            assert lob_depth == data['Level'].max() + 1 # number of levels of order book - maybe add extra + 1 for trades
+            quotes_data_input = pd.read_csv(f'{input_data_folder}/{quotes_file_name}', index_col=0) # read quotes data from input folder
+            quotes_data_input['Datetime'] = pd.to_datetime(quotes_data_input['Datetime'])
+            assert lob_depth == quotes_data_input['Level'].max() + 1 # number of levels of order book - maybe add extra + 1 for trades
 
-        
         else:
             # create non standardized input file using LOB data
             # this block will return data just created from LOBData
                 pass
 
-        # check if input file for trades file exists
-        trades_file_name = f'{pair}-trades-{frequency_seconds}sec-{date_start}-{date_end}.csv.gz'
-        if os.path.isfile(f'{input_data_folder}/{trades_file_name}'):
-            print(f'Reading {input_data_folder}/{trades_file_name}')
-            trades_data = pd.read_csv(f'{input_data_folder}/{trades_file_name}')
-            trades_data['date'] = pd.to_datetime(trades_data['date'])
+        #  check if trades file exist in input folder
+        trades_file_name = f'{pair}-trades-{frequency_seconds}s-{date_start}-{date_end}.csv.gz'
 
+        if os.path.isfile(trades_file_name):
+            print(f'Reading {input_data_folder}/{trades_file_name}')
+            trades_data_input = pd.read_csv(f'{input_data_folder}/{trades_file_name}') # read trades from input folder
+                
         else:
-            # create non standardized input trades file using the function below
-            # this block will return data just created from LOBData
+            # if the input file does not exist, create it
+            print('Fetching trades data')
+            trades_data_input = fetch_s3_trade_files(s3_folder, input_data_folder, pair, frequency)
+
+        trades_data_input_cl = process_s3_trade_files(trades_data_input, frequency) # prepare trades data to concat
 
         # once input files have been correctly read from the input folder, it's time to create a single standardized cache for trades and quotes
+        data = pd.concat([trades_data_input_cl, quotes_data_input]).sort_values(by=['Datetime', 'Level'])
+        roll = roll + 1 # +1 from extra level trades(level -1)
         train_dyn_df, test_dyn_df, top_ob_train, top_ob_test = standardized_data_cache(data, roll, lob_depth, normalized_train_file, normalized_test_file, top_ob_train_file, top_ob_test_file)
 
     # reset indexes, cast datetime type and clean unwanted columns
@@ -132,12 +136,9 @@ def standardized_data_cache(data, roll, lob_depth, normalized_train_file, normal
     train_cached_data = data[data['Datetime'].isin(train_timestamps)].set_index(['Datetime', 'Level'])
     test_cached_data = data[data['Datetime'].isin(test_timestamps)].set_index(['Datetime', 'Level'])
 
-    ### trades managed here before standardization
-
-
     print(f'Train dataset shape: {train_cached_data.shape} - Test dataset shape: {test_cached_data.shape}')
 
-    roll_shift = roll+1 # rolling period for dyn z score - + 1 from shift in ft.normalize
+    roll_shift = roll+1 # rolling period for dyn z score - + 1 from shift in standardize()
 
     # Training
     # custom rolling standardization for px and size separately
@@ -221,6 +222,16 @@ def standardize(ts, ob_levels, norm_type='z_score', roll=0):
 
 
 def fetch_s3_trade_files(s3_folder, input_data_folder, pair, frequency):
+    '''
+    Function that fetch all trades from the relevant locally saved s3 folder. 
+    Daily files date range is obtained from the oldest and newest files in the folder.
+
+    Arguments:
+    s3_folder -- string, root folder where s3 files are locally saved
+    input_data_folder -- string, root folder where preprocessed files are saved
+    pair -- string, currency pair analysed
+    frequency -- timedelta, the minimum time granularity (e.g. timedelta(seconds=10))
+    '''
     s3_trades_folder = f'{s3_folder}/trades'
 
     # series with dates of all the files present in the folder
@@ -241,26 +252,36 @@ def fetch_s3_trade_files(s3_folder, input_data_folder, pair, frequency):
     return df_trades
 
 
-def process_s3_trade_files():
-    # 
-    # df_trades['date'] = pd.to_datetime(df_trades['date'])
-    # df_trades_grp = df_trades.groupby([pd.Grouper(key='date', freq='10s', dropna=False), 'type']).agg({'amount':'sum', 'rate':'mean'}).reset_index()
-    # df_trades_piv = df_trades_grp.pivot(values=['amount', 'rate'], columns='type',index='date').reset_index()
+def process_s3_trade_files(df_trades, frequency):
+    '''
+    Function that take as an input a dataframe of trades and returns a dataframe resampled at the passed frequency and ready
+    to be concatenated to a quotes dataframe with depth (Level = -1)
 
-    # df_trades_piv.columns = list(map("_".join, df_trades_piv.columns)) # "flatten" column names
-    # df_trades_piv.rename(columns={'date_':'Datetime', 'amount_buy':'Ask_Size', 'amount_sell':'Bid_Size', 'rate_buy':'Ask_Price', 'rate_sell':'Bid_Price'}, inplace=True)
+    Arguments:
+    df_trades -- pandas DataFrame, aggregated trades files (ie the output of fetch_s3_trade_files())
+    frequency -- timedelta, the minimum time granularity (e.g. timedelta(seconds=10))
+    '''
 
-    # # fill gaps with no trades
-    # date_range_reindex = pd.DataFrame(pd.date_range(df_trades_piv['Datetime'].min(), df_trades_piv['Datetime'].max(), freq="10s"), columns=['Datetime'])
-    # df_trades_piv = pd.merge(df_trades_piv, date_range_reindex, right_on='Datetime', left_on='Datetime', how='right')
+    df_trades['date'] = pd.to_datetime(df_trades['date'])
+    df_trades_grp = df_trades.groupby([pd.Grouper(key='date', freq=f'{int(frequency.total_seconds())}s', dropna=False), 'type']).agg({'amount':'sum', 'rate':'mean'}).reset_index()
+    df_trades_piv = df_trades_grp.pivot(values=['amount', 'rate'], columns='type',index='date').reset_index()
 
-    # # impute NAs - zero for size and last px for price
-    # df_trades_piv.loc[:,['Ask_Size', 'Bid_Size']] = df_trades_piv.loc[:,['Ask_Size', 'Bid_Size']].fillna(0)
-    # df_trades_piv.loc[:,['Ask_Price', 'Bid_Price']] = df_trades_piv.loc[:,['Ask_Price', 'Bid_Price']].fillna(method='ffill')
+    df_trades_piv.columns = list(map("_".join, df_trades_piv.columns)) # "flatten" column names
+    df_trades_piv.rename(columns={'date_':'Datetime', 'amount_buy':'Ask_Size', 'amount_sell':'Bid_Size', 'rate_buy':'Ask_Price', 'rate_sell':'Bid_Price'}, inplace=True)
 
+    # fill gaps with no trades
+    date_range_reindex = pd.DataFrame(pd.date_range(df_trades_piv['Datetime'].min(), df_trades_piv['Datetime'].max(), freq=f"{int(frequency.total_seconds())}s"), columns=['Datetime'])
+    df_trades_piv = pd.merge(df_trades_piv, date_range_reindex, right_on='Datetime', left_on='Datetime', how='right')
 
-    # df_trades_piv['Level'] = -1
-    pass
+    # impute NAs - zero for size and last px for price
+    df_trades_piv.loc[:,['Ask_Size', 'Bid_Size']] = df_trades_piv.loc[:,['Ask_Size', 'Bid_Size']].fillna(0)
+    df_trades_piv.loc[:,['Ask_Price', 'Bid_Price']] = df_trades_piv.loc[:,['Ask_Price', 'Bid_Price']].fillna(method='ffill')
+
+    # level -1 to keep it separate from order book depth
+    df_trades_piv['Level'] = -1
+
+    return df_trades_piv
+
 
 def cnn_data_reshaping(X, Y, T):
     '''
@@ -318,8 +339,7 @@ def reshape_lob_levels(z_df, output_type='array'):
         return depth_values, dt_index
 
 
-
-# Evaluate model preditctions
+# Evaluate model predictions
 def back_to_labels(x):
     '''Map ternary predictions in format [0.01810119, 0.47650802, 0.5053908 ]
     back to original labels 1,0,-1. Used in conjuction with numpy.argmax, which 
