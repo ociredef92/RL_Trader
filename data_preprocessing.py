@@ -82,36 +82,21 @@ def import_px_data(frequency, pair, date_start, date_end, lob_depth, norm_type, 
     else: # check separately for quotes and trades input files
 
         quotes_data_input = get_lob_data(pair, date_start, date_end, frequency, lob_depth)
-
         quotes_data_input['Datetime'] = dd.to_datetime(quotes_data_input['Datetime'])
         #assert lob_depth == quotes_data_input['Level'].max() + 1 # number of levels of order book - maybe add extra + 1 for trades
 
         #print(quotes_data_input.dtypes)
 
-        #  check if trades file exist in input folder
-        trades_file_name = f'{pair}-trades-{frequency_seconds}s-{date_start}-{date_end}.csv.gz'
-
-        if os.path.isfile(f'{resampled_data_folder}/{trades_file_name}'):
-            print(f'Reading {resampled_data_folder}/{trades_file_name}')
-            trades_data_input = pd.read_csv(f'{resampled_data_folder}/{trades_file_name}') # read trades from input folder
-                
-        else:
-            # if the input file does not exist, create it
-            print('Fetching trades data')
-           
-            raw_trades_data_folder = configuration['folders']['raw_trades_data']
-
-            trades_data_input = fetch_s3_trade_files(raw_trades_data_folder, resampled_data_folder, pair, frequency)
-
-        trades_data_input_cl = process_s3_trade_files(trades_data_input, frequency) # prepare trades data to concat
+        trades_data_input = get_trade_data(pair, date_start, date_end, frequency)
+        trades_data_input['Datetime'] = dd.to_datetime(trades_data_input['Datetime'])
 
         # once input files have been correctly read from the input folder, it's time to create a single standardized cache for trades and quotes
 
         # TODO - concatenate Dask dataframes
         quotes_data_input_pd = quotes_data_input.compute()
+        trades_data_input_pd = trades_data_input.compute()
 
-
-        data = pd.concat([trades_data_input_cl, quotes_data_input_pd]).sort_values(by=['Datetime', 'Level'])
+        data = pd.concat([trades_data_input_pd, quotes_data_input_pd]).sort_values(by=['Datetime', 'Level'])
 
         roll = roll + 1 # +1 from extra level trades(level -1)
         train_dyn_df, test_dyn_df, top_ob_train, top_ob_test = standardized_data_cache(data, roll, lob_depth, standardized_train_file, standardized_test_file, top_ob_train_file, top_ob_test_file)
@@ -242,7 +227,7 @@ def get_lob_data(pair, date_start, date_end, frequency = timedelta(seconds=10), 
     Returns: Dask data frame
     '''
 
-    print(f'Checking for cached data from {date_start} to {date_end}')
+    print(f'Checking for cached LOB data from {date_start} to {date_end}')
 
     assert frequency >= timedelta(seconds=1), 'Frequency must be equal to or greater than 1 second'
 
@@ -252,9 +237,10 @@ def get_lob_data(pair, date_start, date_end, frequency = timedelta(seconds=10), 
 
     date_start = datetime.strptime(date_start, '%Y-%m-%d')
     date_end = datetime.strptime(date_end, '%Y-%m-%d')
+    freq = f'{int(frequency.total_seconds())}s'
 
-    os.makedirs(f'{resampled_data_folder}/{pair}/{lob_depth}_levels/{int(frequency.total_seconds())}s', exist_ok=True)
     os.makedirs(f'{resampled_data_folder}/{pair}/{lob_depth}_levels/original_frequency', exist_ok=True)
+    os.makedirs(f'{resampled_data_folder}/{pair}/{lob_depth}_levels/{freq}', exist_ok=True)
 
     data = []
 
@@ -263,12 +249,11 @@ def get_lob_data(pair, date_start, date_end, frequency = timedelta(seconds=10), 
     while date_to_process <= date_end:
         day_folder = datetime.strftime(date_to_process, '%Y/%m/%d')
         day_cache_file_name = f'{datetime.strftime(date_to_process, "%Y-%m-%d")}.csv.gz'
-        freq = f'{int(frequency.total_seconds())}s'
-        resampled_file_name = f'{resampled_data_folder}/{pair}/{lob_depth}_levels/{freq}/{day_cache_file_name}'
-        if os.path.isfile(resampled_file_name):
-            print(f'Found {resampled_file_name}')
+        resampled_file_path = f'{resampled_data_folder}/{pair}/{lob_depth}_levels/{freq}/{day_cache_file_name}'
+        if os.path.isfile(resampled_file_path):
+            print(f'Found {resampled_file_path}')
         else:
-            print(f'Generating {resampled_file_name}')
+            print(f'Generating {resampled_file_path}')
             original_file_name = f'{resampled_data_folder}/{pair}/{lob_depth}_levels/original_frequency/{day_cache_file_name}'
             if os.path.isfile(original_file_name):
                 day_data = pd.read_csv(original_file_name, parse_dates=['Datetime'])
@@ -278,10 +263,10 @@ def get_lob_data(pair, date_start, date_end, frequency = timedelta(seconds=10), 
                 processed_data = []
 
                 # Load all files in to a dictionary
-                for filename in os.listdir(f'{raw_data_folder}/{pair}/{day_folder}'):
+                for file_name in os.listdir(f'{raw_data_folder}/{pair}/{day_folder}'):
 
                     try:
-                        with gzip.open(f'{raw_data_folder}/{pair}/{day_folder}/{filename}', 'r') as f:
+                        with gzip.open(f'{raw_data_folder}/{pair}/{day_folder}/{file_name}', 'r') as f:
                             json_string = f.read().decode('utf-8')
                             frozen = json_string.count('"isFrozen": "1"')
                             if frozen > 0:
@@ -349,10 +334,10 @@ def get_lob_data(pair, date_start, date_end, frequency = timedelta(seconds=10), 
 
             # resample dataframe to the wanted frequency
             resampled_day_data = day_data.groupby([pd.Grouper(key='Datetime', freq=freq), pd.Grouper(key='Level')]).last().reset_index()
-            resampled_day_data.to_csv(resampled_file_name, compression='gzip')
+            resampled_day_data.to_csv(resampled_file_path, compression='gzip')
 
         date_to_process += timedelta(days=1) # the most nested folder is a day of the month 
-        data.append(resampled_file_name)
+        data.append(resampled_file_path)
 
     # computed = df.compute()
     # df = df.repartition(npartitions=1)
@@ -423,67 +408,73 @@ def load_lob_json(json_string):
     return json_dict
 
 
-
-def fetch_s3_trade_files(s3_folder, input_data_folder, pair, frequency):
+def get_trade_data(pair, date_start, date_end, frequency = timedelta(seconds=10)):
     '''
-    Function that fetch all trades from the relevant locally saved s3 folder. 
-    Daily files date range is obtained from the oldest and newest files in the folder.
-
-    Arguments:
-    s3_folder -- string, root folder where s3 files are locally saved
-    input_data_folder -- string, root folder where preprocessed files are saved
-    pair -- string, currency pair analysed
-    frequency -- timedelta, the minimum time granularity (e.g. timedelta(seconds=10))
-    '''
-    s3_trades_folder = f'{s3_folder}'
-
-    # series with dates of all the files present in the folder
-    trade_files = pd.Series([datetime.strptime(f[:-7][-8:], '%Y%m%d') for f in listdir(f'{s3_trades_folder}/{pair}') if isfile(join(f'{s3_trades_folder}/{pair}', f))])
-
-    # create date range from newest to oldedst trade file
-    dates = pd.date_range(start=trade_files.min(), end=trade_files.max(), freq='D').strftime(date_format='%Y%m%d')
-
-    # read trades
-    print('reading trade files')
-    df_trades = pd.DataFrame([])
-    for date in dates:
-        df_trades = pd.concat([df_trades, pd.read_csv(f'{s3_trades_folder}/{pair}/{pair}-{date}.csv.gz')])
-
-    destination_path = f"{input_data_folder}/{pair}-trades-{int(frequency.total_seconds())}s-{trade_files.min().strftime(format='%Y_%m_%d')}-{trade_files.max().strftime(format='%Y_%m_%d')}.csv.gz"
-    print(f'saving file at {destination_path}')
-    df_trades.to_csv(destination_path, compression='gzip')
-    return df_trades
-
-
-def process_s3_trade_files(df_trades, frequency):
-    '''
-    Function that take as an input a dataframe of trades and returns a dataframe resampled at the passed frequency and ready
+    Function that returns a dataframe of resampled trade data and ready
     to be concatenated to a quotes dataframe with depth (Level = -1)
 
     Arguments:
-    df_trades -- pandas DataFrame, aggregated trades files (ie the output of fetch_s3_trade_files())
+    pair -- string, curency pair to return (e.g.'USDT_BTC')
+    date_start -- string, timeseries start
+    date_end -- string, timeseries end
     frequency -- timedelta, the minimum time granularity (e.g. timedelta(seconds=10))
     '''
 
-    df_trades['date'] = pd.to_datetime(df_trades['date'])
-    df_trades_grp = df_trades.groupby([pd.Grouper(key='date', freq=f'{int(frequency.total_seconds())}s', dropna=False), 'type']).agg({'amount':'sum', 'rate':'mean'}).reset_index()
-    df_trades_piv = df_trades_grp.pivot(values=['amount', 'rate'], columns='type',index='date').reset_index()
+    print(f'Checking for cached trade data from {date_start} to {date_end}')
 
-    df_trades_piv.columns = list(map("_".join, df_trades_piv.columns)) # "flatten" column names
-    df_trades_piv.rename(columns={'date_':'Datetime', 'amount_buy':'Ask_Size', 'amount_sell':'Bid_Size', 'rate_buy':'Ask_Price', 'rate_sell':'Bid_Price'}, inplace=True)
+    configuration = config()
+    raw_data_folder = configuration['folders']['raw_trade_data']
+    resampled_data_folder = configuration['folders']['resampled_data']
 
-    # fill gaps with no trades
-    date_range_reindex = pd.DataFrame(pd.date_range(df_trades_piv['Datetime'].min(), df_trades_piv['Datetime'].max(), freq=f"{int(frequency.total_seconds())}s"), columns=['Datetime'])
-    df_trades_piv = pd.merge(df_trades_piv, date_range_reindex, right_on='Datetime', left_on='Datetime', how='right')
+    date_start = datetime.strptime(date_start, '%Y-%m-%d')
+    date_end = datetime.strptime(date_end, '%Y-%m-%d')
+    freq = f'{int(frequency.total_seconds())}s'
+    os.makedirs(f'{resampled_data_folder}/{pair}/trades/{freq}', exist_ok=True)
 
-    # impute NAs - zero for size and last px for price
-    df_trades_piv.loc[:,['Ask_Size', 'Bid_Size']] = df_trades_piv.loc[:,['Ask_Size', 'Bid_Size']].fillna(0)
-    df_trades_piv.loc[:,['Ask_Price', 'Bid_Price']] = df_trades_piv.loc[:,['Ask_Price', 'Bid_Price']].fillna(method='ffill')
+    data = []
 
-    # level -1 to keep it separate from order book depth
-    df_trades_piv['Level'] = -1
+    # Loop through day folders
+    date_to_process = date_start
+    while date_to_process <= date_end:
+        resampled_file_path = f'{resampled_data_folder}/{pair}/trades/{freq}/{datetime.strftime(date_to_process, "%Y-%m-%d")}.csv.gz'
+        if os.path.isfile(resampled_file_path):
+            print(f'Found {resampled_file_path}')
+        else:
+            print(f'Generating {resampled_file_path}')
+            raw_file_name = f'{raw_data_folder}/{pair}/{pair}-{datetime.strftime(date_to_process, "%Y%m%d")}.csv.gz'
+            if os.path.isfile(raw_file_name):
+                day_data = pd.read_csv(raw_file_name, parse_dates=['date'])
 
-    return df_trades_piv
+                #df_trades['date'] = pd.to_datetime(df_trades['date'])
+
+                df_trades_grp = day_data.groupby([pd.Grouper(key='date', freq=freq, dropna=False), 'type']).agg({'amount':'sum', 'rate':'mean'}).reset_index()
+                df_trades_piv = df_trades_grp.pivot(values=['amount', 'rate'], columns='type',index='date').reset_index()
+
+                df_trades_piv.columns = list(map("_".join, df_trades_piv.columns)) # "flatten" column names
+                df_trades_piv.rename(columns={'date_':'Datetime', 'amount_buy':'Ask_Size', 'amount_sell':'Bid_Size', 'rate_buy':'Ask_Price', 'rate_sell':'Bid_Price'}, inplace=True)
+
+                # fill gaps with no trades
+                date_range_reindex = pd.DataFrame(pd.date_range(df_trades_piv['Datetime'].min(), df_trades_piv['Datetime'].max(), freq=freq), columns=['Datetime'])
+                df_trades_piv = pd.merge(df_trades_piv, date_range_reindex, right_on='Datetime', left_on='Datetime', how='right')
+
+                # impute NAs - zero for size and last px for price
+                df_trades_piv.loc[:,['Ask_Size', 'Bid_Size']] = df_trades_piv.loc[:,['Ask_Size', 'Bid_Size']].fillna(0)
+                df_trades_piv.loc[:,['Ask_Price', 'Bid_Price']] = df_trades_piv.loc[:,['Ask_Price', 'Bid_Price']].fillna(method='ffill')
+
+                # level -1 to keep it separate from order book depth
+                df_trades_piv['Level'] = -1
+
+            else:
+                raise Exception(f'Missing {raw_file_name}')
+
+
+            # resample dataframe to the wanted frequency
+            df_trades_piv.to_csv(resampled_file_path, compression='gzip')
+
+        date_to_process += timedelta(days=1) # the most nested folder is a day of the month 
+        data.append(resampled_file_path)
+
+    return dd.read_csv(data, compression='gzip')
 
 
 def cnn_data_reshaping(X, Y, T):
@@ -558,13 +549,13 @@ def back_to_labels(x):
     elif x == 2:
         return -1
 
-# frequency = timedelta(seconds=60)
-# pair = 'USDT_BTC'
-# date_start = '2021-02-13'
-# date_end = '2021-02-14'
-# lob_depth = 10
-# norm_type = 'dyn_z_score'
-# roll = 7200 * 6
-# label_technique = 'three_steps'
+frequency = timedelta(seconds=60)
+pair = 'USDT_BTC'
+date_start = '2021-02-13'
+date_end = '2021-02-14'
+lob_depth = 10
+norm_type = 'dyn_z_score'
+roll = 7200 * 6
+label_technique = 'three_steps'
 
-# train_dyn_df, test_dyn_df, top_ob_train, top_ob_test = import_px_data(frequency, pair, date_start, date_end, lob_depth, norm_type, roll)
+train_dyn_df, test_dyn_df, top_ob_train, top_ob_test = import_px_data(frequency, pair, date_start, date_end, lob_depth, norm_type, roll)

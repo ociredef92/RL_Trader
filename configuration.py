@@ -22,7 +22,7 @@ def config():
             'experiments': '~/Experiments',
             'resampled_data': '~/Experiments/resampled',
             'raw_lob_data': '~/Experiments/input/raw/lob',
-            'raw_trades_data': '~/Experiments/input/raw/trades'
+            'raw_trade_data': '~/Experiments/input/raw/trades'
             }
 
         with open('project.conf', 'w') as configfile:    # save
