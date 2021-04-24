@@ -4,6 +4,8 @@ from datetime import datetime, timedelta
 import gzip
 import json
 import os
+import shutil
+import boto3
 from os import listdir
 from os.path import isfile, join
 
@@ -84,8 +86,6 @@ def import_px_data(frequency, pair, date_start, date_end, lob_depth, norm_type, 
         quotes_data_input = get_lob_data(pair, date_start, date_end, frequency, lob_depth)
         quotes_data_input['Datetime'] = dd.to_datetime(quotes_data_input['Datetime'])
         #assert lob_depth == quotes_data_input['Level'].max() + 1 # number of levels of order book - maybe add extra + 1 for trades
-
-        #print(quotes_data_input.dtypes)
 
         trades_data_input = get_trade_data(pair, date_start, date_end, frequency)
         trades_data_input['Datetime'] = dd.to_datetime(trades_data_input['Datetime'])
@@ -229,6 +229,8 @@ def get_lob_data(pair, date_start, date_end, frequency = timedelta(seconds=10), 
 
     print(f'Checking for cached LOB data from {date_start} to {date_end}')
 
+    #TODO assert if date_end is yesterday or earlier
+
     assert frequency >= timedelta(seconds=1), 'Frequency must be equal to or greater than 1 second'
 
     configuration = config()
@@ -261,6 +263,33 @@ def get_lob_data(pair, date_start, date_end, frequency = timedelta(seconds=10), 
                 # empty json and nested list every new day processed
                 raw_data = {} # empty dict to update with incoming json
                 processed_data = []
+
+                if not os.path.isdir(f'{raw_data_folder}/{pair}/{day_folder}'):
+
+                    s3_resource = boto3.resource('s3')
+
+                    """
+                    The calls to AWS STS AssumeRole must be signed with the access key ID and secret access key of an existing IAM user.
+                    The credentials can be in environment variables or in a configuration file and will be discovered automatically by the boto3.client() function.
+                    For more information, see the Python SDK documentation: http://boto3.readthedocs.io/en/latest/reference/services/sts.html#client
+                    """
+                    if configuration['other'].getboolean('cross_account_access'):
+                        sts_client = boto3.client('sts')
+                        response = sts_client.assume_role(RoleArn=configuration['other']['cross_account_access_role'], RoleSessionName="AssumeRoleSession")
+                        s3_resource = boto3.resource(
+                            's3',
+                            aws_access_key_id = response['Credentials']['AccessKeyId'],
+                            aws_secret_access_key = response['Credentials']['SecretAccessKey'],
+                            aws_session_token = response['Credentials']['SessionToken'],
+                        )
+
+                    lob_data_bucket = s3_resource.Bucket(configuration['buckets']['lob_data'])
+
+                    os.makedirs(f'{raw_data_folder}/tmp/{pair}/{day_folder}', exist_ok=True)
+                    for obj in lob_data_bucket.objects.filter(Prefix=f'{pair}/{day_folder}'):
+                        lob_data_bucket.download_file(obj.key, f'{raw_data_folder}/tmp/{obj.key}')
+                        print(f'Downloaded {obj.key} from S3')
+                    shutil.move(f'{raw_data_folder}/tmp/{pair}/{day_folder}', f'{raw_data_folder}/{pair}/{day_folder}')
 
                 # Load all files in to a dictionary
                 for file_name in os.listdir(f'{raw_data_folder}/{pair}/{day_folder}'):
@@ -441,34 +470,50 @@ def get_trade_data(pair, date_start, date_end, frequency = timedelta(seconds=10)
             print(f'Found {resampled_file_path}')
         else:
             print(f'Generating {resampled_file_path}')
-            raw_file_name = f'{raw_data_folder}/{pair}/{pair}-{datetime.strftime(date_to_process, "%Y%m%d")}.csv.gz'
-            if os.path.isfile(raw_file_name):
-                day_data = pd.read_csv(raw_file_name, parse_dates=['date'])
+            raw_file_name = f'{pair}-{datetime.strftime(date_to_process, "%Y%m%d")}.csv.gz'
+            raw_file_path = f'{raw_data_folder}/{pair}/{raw_file_name}'
+            if not os.path.isfile(raw_file_path):
+                s3_resource = boto3.resource('s3')
 
-                #df_trades['date'] = pd.to_datetime(df_trades['date'])
+                """
+                The calls to AWS STS AssumeRole must be signed with the access key ID and secret access key of an existing IAM user.
+                The credentials can be in environment variables or in a configuration file and will be discovered automatically by the boto3.client() function.
+                For more information, see the Python SDK documentation: http://boto3.readthedocs.io/en/latest/reference/services/sts.html#client
+                """
+                if configuration['other'].getboolean('cross_account_access'):
+                    sts_client = boto3.client('sts')
+                    response = sts_client.assume_role(RoleArn=configuration['other']['cross_account_access_role'], RoleSessionName="AssumeRoleSession")
+                    s3_resource = boto3.resource(
+                        's3',
+                        aws_access_key_id = response['Credentials']['AccessKeyId'],
+                        aws_secret_access_key = response['Credentials']['SecretAccessKey'],
+                        aws_session_token = response['Credentials']['SessionToken'],
+                    )
 
-                df_trades_grp = day_data.groupby([pd.Grouper(key='date', freq=freq, dropna=False), 'type']).agg({'amount':'sum', 'rate':'mean'}).reset_index()
-                df_trades_piv = df_trades_grp.pivot(values=['amount', 'rate'], columns='type',index='date').reset_index()
+                trade_data_bucket = s3_resource.Bucket(configuration['buckets']['trade_data'])
+                trade_data_bucket.download_file(f'{pair}/{raw_file_name}', f'{raw_file_path}')
+                print(f'Downloaded {raw_file_name} from S3')
 
-                df_trades_piv.columns = list(map("_".join, df_trades_piv.columns)) # "flatten" column names
-                df_trades_piv.rename(columns={'date_':'Datetime', 'amount_buy':'Ask_Size', 'amount_sell':'Bid_Size', 'rate_buy':'Ask_Price', 'rate_sell':'Bid_Price'}, inplace=True)
+            day_data = pd.read_csv(raw_file_path, parse_dates=['date'])
 
-                # fill gaps with no trades
-                date_range_reindex = pd.DataFrame(pd.date_range(df_trades_piv['Datetime'].min(), df_trades_piv['Datetime'].max(), freq=freq), columns=['Datetime'])
-                df_trades_piv = pd.merge(df_trades_piv, date_range_reindex, right_on='Datetime', left_on='Datetime', how='right')
+            #df_trades['date'] = pd.to_datetime(df_trades['date'])
 
-                # impute NAs - zero for size and last px for price
-                df_trades_piv.loc[:,['Ask_Size', 'Bid_Size']] = df_trades_piv.loc[:,['Ask_Size', 'Bid_Size']].fillna(0)
-                df_trades_piv.loc[:,['Ask_Price', 'Bid_Price']] = df_trades_piv.loc[:,['Ask_Price', 'Bid_Price']].fillna(method='ffill')
+            df_trades_grp = day_data.groupby([pd.Grouper(key='date', freq=freq, dropna=False), 'type']).agg({'amount':'sum', 'rate':'mean'}).reset_index()
+            df_trades_piv = df_trades_grp.pivot(values=['amount', 'rate'], columns='type',index='date').reset_index()
 
-                # level -1 to keep it separate from order book depth
-                df_trades_piv['Level'] = -1
+            df_trades_piv.columns = list(map("_".join, df_trades_piv.columns)) # "flatten" column names
+            df_trades_piv.rename(columns={'date_':'Datetime', 'amount_buy':'Ask_Size', 'amount_sell':'Bid_Size', 'rate_buy':'Ask_Price', 'rate_sell':'Bid_Price'}, inplace=True)
 
-            else:
-                raise Exception(f'Missing {raw_file_name}')
+            # fill gaps with no trades
+            date_range_reindex = pd.DataFrame(pd.date_range(df_trades_piv['Datetime'].min(), df_trades_piv['Datetime'].max(), freq=freq), columns=['Datetime'])
+            df_trades_piv = pd.merge(df_trades_piv, date_range_reindex, right_on='Datetime', left_on='Datetime', how='right')
 
+            # impute NAs - zero for size and last px for price
+            df_trades_piv.loc[:,['Ask_Size', 'Bid_Size']] = df_trades_piv.loc[:,['Ask_Size', 'Bid_Size']].fillna(0)
+            df_trades_piv.loc[:,['Ask_Price', 'Bid_Price']] = df_trades_piv.loc[:,['Ask_Price', 'Bid_Price']].fillna(method='ffill')
 
-            # resample dataframe to the wanted frequency
+            # level -1 to keep it separate from order book depth
+            df_trades_piv['Level'] = -1
             df_trades_piv.to_csv(resampled_file_path, compression='gzip')
 
         date_to_process += timedelta(days=1) # the most nested folder is a day of the month 
@@ -551,8 +596,8 @@ def back_to_labels(x):
 
 frequency = timedelta(seconds=60)
 pair = 'USDT_BTC'
-date_start = '2021-02-13'
-date_end = '2021-02-14'
+date_start = '2021-03-14'
+date_end = '2021-03-15'
 lob_depth = 10
 norm_type = 'dyn_z_score'
 roll = 7200 * 6
