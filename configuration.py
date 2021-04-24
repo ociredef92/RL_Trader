@@ -25,6 +25,14 @@ def config():
             'raw_lob_data': f'{wd}/Experiments/input/raw/lob',
             'raw_trade_data': f'{wd}/Experiments/input/raw/trades'
             }
+        config['buckets'] = {
+            'lob_data': 'limit-order-books-polonie-limitorderbooksnapshots-1ggf6vguvne3r',
+            'trade_data': 'trades-poloniex'
+            }
+        config['other'] = {
+            'cross_account_access': 'no',
+            'cross_account_access_role': 'arn:aws:iam::589435931329:role/S3CrossAccountAccess',
+            }
 
         with open('project.conf', 'w') as configfile:    # save
             config.write(configfile)
