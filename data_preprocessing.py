@@ -112,11 +112,11 @@ def import_px_data(frequency, pair, date_start, date_end, lob_depth, norm_type, 
 
     top_ob_train = top_ob_train.reset_index()
     top_ob_train['Datetime'] = pd.to_datetime(top_ob_train['Datetime'])
-    top_ob_train.drop('Unnamed: 0.1', axis=1, inplace=True)
+    top_ob_train.drop('Unnamed: 0', axis=1, inplace=True)
 
     top_ob_test = top_ob_test.reset_index()
     top_ob_test['Datetime'] = pd.to_datetime(top_ob_test['Datetime'])
-    top_ob_test.drop('Unnamed: 0.1', axis=1, inplace=True)
+    top_ob_test.drop('Unnamed: 0', axis=1, inplace=True)
 
     return train_dyn_df, test_dyn_df, top_ob_train, top_ob_test
 
@@ -262,7 +262,9 @@ def get_lob_data(pair, date_start, date_end, frequency = timedelta(seconds=10), 
                 raw_data = {} # empty dict to update with incoming json
                 processed_data = []
 
-                # Load all files in to a dictionary
+                # Load all files in to a dictionary 
+                #print(raw_data_folder)               
+                #print(os.listdir(f'{raw_data_folder}/{pair}/{day_folder}'))
                 for file_name in os.listdir(f'{raw_data_folder}/{pair}/{day_folder}'):
 
                     try:
@@ -446,8 +448,8 @@ def get_trade_data(pair, date_start, date_end, frequency = timedelta(seconds=10)
                 day_data = pd.read_csv(raw_file_name, parse_dates=['date'])
 
                 #df_trades['date'] = pd.to_datetime(df_trades['date'])
-
-                df_trades_grp = day_data.groupby([pd.Grouper(key='date', freq=freq, dropna=False), 'type']).agg({'amount':'sum', 'rate':'mean'}).reset_index()
+                #print(day_data.head(30))
+                df_trades_grp = day_data.groupby([pd.Grouper(key='date', freq=freq), 'type']).agg({'amount':'sum', 'rate':'mean'}).reset_index()
                 df_trades_piv = df_trades_grp.pivot(values=['amount', 'rate'], columns='type',index='date').reset_index()
 
                 df_trades_piv.columns = list(map("_".join, df_trades_piv.columns)) # "flatten" column names
@@ -549,13 +551,13 @@ def back_to_labels(x):
     elif x == 2:
         return -1
 
-frequency = timedelta(seconds=60)
-pair = 'USDT_BTC'
-date_start = '2021-02-13'
-date_end = '2021-02-14'
-lob_depth = 10
-norm_type = 'dyn_z_score'
-roll = 7200 * 6
-label_technique = 'three_steps'
+# frequency = timedelta(seconds=60)
+# pair = 'USDT_BTC'
+# date_start = '2021-02-13'
+# date_end = '2021-02-14'
+# lob_depth = 10
+# norm_type = 'dyn_z_score'
+# roll = 7200 * 6
+# label_technique = 'three_steps'
 
-train_dyn_df, test_dyn_df, top_ob_train, top_ob_test = import_px_data(frequency, pair, date_start, date_end, lob_depth, norm_type, roll)
+# train_dyn_df, test_dyn_df, top_ob_train, top_ob_test = import_px_data(frequency, pair, date_start, date_end, lob_depth, norm_type, roll)

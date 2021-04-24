@@ -13,16 +13,17 @@ def config():
     '''
 
     config = configparser.ConfigParser()
+    wd = os.getcwd()
 
     if os.path.isfile('project.conf'):
         config.read('project.conf')
 
     else:
         config['folders'] = {
-            'experiments': '~/Experiments',
-            'resampled_data': '~/Experiments/resampled',
-            'raw_lob_data': '~/Experiments/input/raw/lob',
-            'raw_trade_data': '~/Experiments/input/raw/trades'
+            'experiments': f'{wd}/Experiments',
+            'resampled_data': f'{wd}/Experiments/resampled',
+            'raw_lob_data': f'{wd}/Experiments/input/raw/lob',
+            'raw_trade_data': f'{wd}/Experiments/input/raw/trades'
             }
 
         with open('project.conf', 'w') as configfile:    # save
