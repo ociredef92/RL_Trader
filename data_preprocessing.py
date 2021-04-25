@@ -72,20 +72,23 @@ def import_px_data(frequency, pair, date_start, date_end, lob_depth, norm_type, 
     if os.path.isfile(standardized_test_file): # testing for one of cache files, assuming all were saved
         # Import cached standardized data
         print(f'Reading cached {standardized_train_file}')
-        train_dyn_df = pd.read_csv(standardized_train_file, index_col=1)
+        train_dyn_df = pd.read_csv(standardized_train_file)#, index_col=1)
+        train_dyn_df.drop('Unnamed: 0', axis=1, inplace=True)
+
         print(f'Reading cached {standardized_test_file}')
-        test_dyn_df = pd.read_csv(standardized_test_file, index_col=1)
+        test_dyn_df = pd.read_csv(standardized_test_file)#, index_col=1)
+        test_dyn_df.drop('Unnamed: 0', axis=1, inplace=True)
 
         print(f'Reading cached {top_ob_train_file}')
-        top_ob_train = pd.read_csv(top_ob_train_file, index_col=[0,1])
+        top_ob_train = pd.read_csv(top_ob_train_file)#, index_col=[0,1])
+
         print(f'Reading cached {top_ob_test_file}')
-        top_ob_test = pd.read_csv(top_ob_test_file, index_col=[0,1])
+        top_ob_test = pd.read_csv(top_ob_test_file)#, index_col=[0,1])
 
     else: # check separately for quotes and trades input files
 
         quotes_data_input = get_lob_data(pair, date_start, date_end, frequency, lob_depth)
         quotes_data_input['Datetime'] = dd.to_datetime(quotes_data_input['Datetime'])
-        #assert lob_depth == quotes_data_input['Level'].max() + 1 # number of levels of order book - maybe add extra + 1 for trades
 
         trades_data_input = get_trade_data(pair, date_start, date_end, frequency)
         trades_data_input['Datetime'] = dd.to_datetime(trades_data_input['Datetime'])
@@ -98,49 +101,54 @@ def import_px_data(frequency, pair, date_start, date_end, lob_depth, norm_type, 
 
         data = pd.concat([trades_data_input_pd, quotes_data_input_pd]).sort_values(by=['Datetime', 'Level'])
 
-        roll = roll + 1 # +1 from extra level trades(level -1)
-        train_dyn_df, test_dyn_df, top_ob_train, top_ob_test = standardized_data_cache(data, roll, lob_depth, standardized_train_file, standardized_test_file, top_ob_train_file, top_ob_test_file)
+        roll = roll #+ 1 # +1 from extra level trades(level -1)
+        stdz_depth = lob_depth + 1
+        train_dyn_df, test_dyn_df, top_ob_train, top_ob_test = standardized_data_cache(data, roll, stdz_depth, standardized_train_file, standardized_test_file, top_ob_train_file, top_ob_test_file)
 
     # reset indexes, cast datetime type and clean unwanted columns
-    train_dyn_df = train_dyn_df.reset_index()
+    print(f'train_dyn_df {train_dyn_df.head(3)}')
+    print(f'test_dyn_df {test_dyn_df.head(3)}')
+    print(f'top_ob_train {top_ob_train.head(3)}')
+    print(f'top_ob_test {top_ob_test.head(3)}')
+    #train_dyn_df = train_dyn_df.reset_index()
     train_dyn_df['Datetime'] = pd.to_datetime(train_dyn_df['Datetime'])
-    train_dyn_df.drop('Unnamed: 0', axis=1, inplace=True)
+    
 
-    test_dyn_df = test_dyn_df.reset_index()
+    #test_dyn_df = test_dyn_df.reset_index()
     test_dyn_df['Datetime'] = pd.to_datetime(test_dyn_df['Datetime'])
-    test_dyn_df.drop('Unnamed: 0', axis=1, inplace=True)
-
-    top_ob_train = top_ob_train.reset_index()
+    #test_dyn_df.set_index('index', inplace=True)
+    
+    #top_ob_train = top_ob_train.reset_index()
     top_ob_train['Datetime'] = pd.to_datetime(top_ob_train['Datetime'])
     top_ob_train.drop('Unnamed: 0', axis=1, inplace=True)
 
-    top_ob_test = top_ob_test.reset_index()
+    #top_ob_test = top_ob_test.reset_index()
     top_ob_test['Datetime'] = pd.to_datetime(top_ob_test['Datetime'])
     top_ob_test.drop('Unnamed: 0', axis=1, inplace=True)
 
-    return train_dyn_df, test_dyn_df, top_ob_train, top_ob_test
+    return train_dyn_df, test_dyn_df, top_ob_train, top_ob_test,data
 
 
-def standardized_data_cache(data, roll, lob_depth, standardized_train_file, standardized_test_file, top_ob_train_file, top_ob_test_file):
+def standardized_data_cache(data, roll, stdz_depth, standardized_train_file, standardized_test_file, top_ob_train_file, top_ob_test_file):
     # Train test split
-    train_test_split = int((data.shape[0] / lob_depth) * 0.7) # slice reference for train and test
+    train_test_split = int((data.shape[0] / stdz_depth) * 0.7) # slice reference for train and test
     train_timestamps = data['Datetime'].unique()[:train_test_split]
     test_timestamps = data['Datetime'].unique()[train_test_split:]
-
     train_cached_data = data[data['Datetime'].isin(train_timestamps)].set_index(['Datetime', 'Level'])
     test_cached_data = data[data['Datetime'].isin(test_timestamps)].set_index(['Datetime', 'Level'])
 
-    print(f'Train dataset shape: {train_cached_data.shape} - Test dataset shape: {test_cached_data.shape}')
+    print(f'All data shape: {data.shape} - Train dataset shape: {train_cached_data.shape} - Test dataset shape: {test_cached_data.shape}')
 
-    roll_shift = roll+1 # rolling period for dyn z score - + 1 from shift in standardize()
+    roll_shift = roll # rolling period for dyn z score - + 1 from shift in standardize()
 
     # Training
     # custom rolling standardization for px and size separately
-    train_dyn_prices = standardize(train_cached_data[['Ask_Price', 'Bid_Price']], lob_depth, 'dyn_z_score', roll)
-    train_dyn_volumes = standardize(train_cached_data[['Ask_Size', 'Bid_Size']], lob_depth, 'dyn_z_score', roll)
+    train_dyn_prices = standardize(train_cached_data[['Ask_Price', 'Bid_Price']], stdz_depth, 'dyn_z_score', roll)
+    train_dyn_volumes = standardize(train_cached_data[['Ask_Size', 'Bid_Size']], stdz_depth, 'dyn_z_score', roll)
     train_dyn_df = pd.concat([train_dyn_prices, train_dyn_volumes], axis=1).reset_index() # concat along row index #1
     print(f'Saving {standardized_train_file}')
-    train_dyn_df.to_csv(standardized_train_file, compression='gzip') # save standardized data to csv 
+    train_dyn_df.to_csv(standardized_train_file, compression='gzip') # save standardized data to csv
+    #train_dyn_df.reset_index(inplace=True)
 
     top_ob_train = train_cached_data[train_cached_data.index.get_level_values(1)==0][roll_shift:] #3
     top_ob_train['Mid_Price'] = (top_ob_train['Ask_Price'] + top_ob_train['Bid_Price']) / 2
@@ -148,17 +156,18 @@ def standardized_data_cache(data, roll, lob_depth, standardized_train_file, stan
     top_ob_train['merge_index'] = top_ob_train.reset_index().index.values # useful for merging later
     print(f'Saving {top_ob_train_file}')
     top_ob_train.to_csv(top_ob_train_file, compression='gzip') # save top level not standardized to csv
-
+    top_ob_train.reset_index(inplace=True)
     # print(f'Saving {standardized_data_folder}/{pair}/TRAIN_top--{norm_type}-{roll}--{input_file_name}')
     # train_dyn_df[train_dyn_df['Level']==0].to_csv(f'{standardized_data_folder}/{pair}/TRAIN_TOP--{norm_type}-{roll}--{input_file_name}', compression='gzip') # save top level to csv 
 
     # Test
     # custom rolling standardization for px and size separately
-    test_dyn_prices = standardize(test_cached_data[['Ask_Price', 'Bid_Price']], lob_depth, 'dyn_z_score', roll)
-    test_dyn_volumes = standardize(test_cached_data[['Ask_Size', 'Bid_Size']], lob_depth, 'dyn_z_score', roll)
+    test_dyn_prices = standardize(test_cached_data[['Ask_Price', 'Bid_Price']], stdz_depth, 'dyn_z_score', roll)
+    test_dyn_volumes = standardize(test_cached_data[['Ask_Size', 'Bid_Size']], stdz_depth, 'dyn_z_score', roll)
     test_dyn_df = pd.concat([test_dyn_prices, test_dyn_volumes], axis=1).reset_index() # concat along row index #2
     print(f'Saving {standardized_test_file}')
     test_dyn_df.to_csv(standardized_test_file, compression='gzip') # save standardized data to csv
+    #test_dyn_df.reset_index(inplace=True)
 
     top_ob_test = test_cached_data[test_cached_data.index.get_level_values(1)==0][roll_shift:] #4
     top_ob_test['Mid_Price'] = (top_ob_test['Ask_Price'] + top_ob_test['Bid_Price']) / 2
@@ -166,11 +175,12 @@ def standardized_data_cache(data, roll, lob_depth, standardized_train_file, stan
     top_ob_test['merge_index'] = top_ob_test.reset_index().index.values # useful for merging later
     print(f'Saving {top_ob_test_file}')
     top_ob_test.to_csv(top_ob_test_file, compression='gzip') # # save top level not standardized to csv
+    top_ob_test.reset_index(inplace=True)
 
     return train_dyn_df, test_dyn_df, top_ob_train, top_ob_test
 
 # Model training - data preparation
-def standardize(ts, ob_levels, norm_type='z_score', roll=0):
+def standardize(ts, stdz_depth, norm_type='z_score', roll=0):
     '''
     Function to standardize (mean of zero and unit variance) timeseries
 
@@ -182,7 +192,7 @@ def standardize(ts, ob_levels, norm_type='z_score', roll=0):
 
     Returns: pandas series
     '''
-    
+
     if norm_type=='z_score':
         
         try:
@@ -201,12 +211,12 @@ def standardize(ts, ob_levels, norm_type='z_score', roll=0):
         if ts_shape > 1:
             ts_stacked = ts.stack()
 
-            print(f'rolling window = {roll * ob_levels * ts_shape}, calculate as roll: {roll} * levels: {ob_levels} * shape[1]: {ts_shape}')
+            print(f'rolling window = {roll * stdz_depth * ts_shape}, calculate as roll: {roll} * levels: {stdz_depth} * shape[1]: {ts_shape}')
 
-            ts_dyn_z = (ts_stacked - ts_stacked.rolling(roll * ob_levels * ts_shape).mean().shift((ob_levels * ts_shape) + 1) 
-              ) / ts_stacked.rolling(roll * ob_levels * ts_shape).std(ddof=0).shift((ob_levels * ts_shape) + 1)
+            ts_dyn_z = (ts_stacked - ts_stacked.rolling(roll * stdz_depth * ts_shape).mean().shift((stdz_depth * ts_shape) + 1) 
+              ) / ts_stacked.rolling(roll * stdz_depth * ts_shape).std(ddof=0).shift((stdz_depth * ts_shape) + 1)
             
-            norm_df = ts_dyn_z.reset_index().pivot_table(index=['Datetime', 'Level'], columns='level_2', values=0, dropna=True)
+            norm_df = ts_dyn_z.reset_index().pivot_table(index=['Datetime', 'Level'], columns='level_2', values=0)#, dropna=True)
             print('done')
             #Q.put(norm_df)
             return norm_df
@@ -496,22 +506,41 @@ def get_trade_data(pair, date_start, date_end, frequency = timedelta(seconds=10)
 
             day_data = pd.read_csv(raw_file_path, parse_dates=['date'])
 
-            #df_trades['date'] = pd.to_datetime(df_trades['date'])
-
-            df_trades_grp = day_data.groupby([pd.Grouper(key='date', freq=freq, dropna=False), 'type']).agg({'amount':'sum', 'rate':'mean'}).reset_index()
+            df_trades_grp = day_data.groupby([pd.Grouper(key='date', freq=freq), 'type']).agg({'amount':'sum', 'rate':'mean'}).reset_index()
             df_trades_piv = df_trades_grp.pivot(values=['amount', 'rate'], columns='type',index='date').reset_index()
 
             df_trades_piv.columns = list(map("_".join, df_trades_piv.columns)) # "flatten" column names
             df_trades_piv.rename(columns={'date_':'Datetime', 'amount_buy':'Ask_Size', 'amount_sell':'Bid_Size', 'rate_buy':'Ask_Price', 'rate_sell':'Bid_Price'}, inplace=True)
 
-            # fill gaps with no trades
-            date_range_reindex = pd.DataFrame(pd.date_range(df_trades_piv['Datetime'].min(), df_trades_piv['Datetime'].max(), freq=freq), columns=['Datetime'])
-            df_trades_piv = pd.merge(df_trades_piv, date_range_reindex, right_on='Datetime', left_on='Datetime', how='right')
+            # fill gaps with no trades - MAYBE we need something similar for quotes as a data integrity check
+            start_dt = datetime(date_to_process.year, date_to_process.month, date_to_process.day, 0, 0, 0)
+            end_dt = datetime(date_to_process.year, date_to_process.month, date_to_process.day, 23, 59, 59) # to ensure each timestep is covered
+            date_range_reindex = pd.DataFrame(pd.date_range(start_dt, end_dt, freq=freq), columns=['Datetime'])
+            df_trades_piv = pd.merge(df_trades_piv, date_range_reindex, right_on='Datetime', left_on='Datetime', how='right').sort_values('Datetime')
 
             # impute NAs - zero for size and last px for price
             df_trades_piv.loc[:,['Ask_Size', 'Bid_Size']] = df_trades_piv.loc[:,['Ask_Size', 'Bid_Size']].fillna(0)
             df_trades_piv.loc[:,['Ask_Price', 'Bid_Price']] = df_trades_piv.loc[:,['Ask_Price', 'Bid_Price']].fillna(method='ffill')
 
+            # impute NAs for the first rows of the dataframes
+            try:
+                # check if previous day exists and assign last value of previous day df          
+                prev_day = date_to_process + timedelta(days=-1)
+                prev_day_data = pd.read_csv(f'{resampled_data_folder}/{pair}/trades/{freq}/{datetime.strftime(prev_day, "%Y-%m-%d")}.csv.gz')
+                prev_file_ask_px = prev_day_data.iloc[-1]['Ask_Price']
+                prev_file_bid_px = prev_day_data.iloc[-1]['Bid_Price']
+
+            except Exception as e:
+                # if previous day not in the database, use first avaialble future value - not ideal
+                print(e)
+                print(f'Non-continuous data being processed. imputing avg values for bid or ask prices at the beginning of {date_to_process}')
+                # NOT ideal cause we are leaking information
+                prev_file_ask_px = df_trades_piv['Ask_Price'].dropna().iloc[0]
+                prev_file_bid_px = df_trades_piv['Bid_Price'].dropna().iloc[0]
+
+            df_trades_piv.loc[:, 'Bid_Price'] = df_trades_piv.loc[:, 'Bid_Price'].fillna(prev_file_bid_px)
+            df_trades_piv.loc[:, 'Ask_Price'] = df_trades_piv.loc[:, 'Ask_Price'].fillna(prev_file_ask_px)
+                    
             # level -1 to keep it separate from order book depth
             df_trades_piv['Level'] = -1
             df_trades_piv.to_csv(resampled_file_path, compression='gzip')
@@ -594,10 +623,10 @@ def back_to_labels(x):
     elif x == 2:
         return -1
 
-# frequency = timedelta(seconds=60)
+# frequency = timedelta(seconds=10)
 # pair = 'USDT_BTC'
-# date_start = '2021-02-13'
-# date_end = '2021-02-14'
+# date_start = '2020-12-10'
+# date_end = '2021-01-08'
 # lob_depth = 10
 # norm_type = 'dyn_z_score'
 # roll = 7200 * 6

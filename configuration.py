@@ -30,7 +30,7 @@ def config():
             'trade_data': 'trades-poloniex'
             }
         config['other'] = {
-            'cross_account_access': 'no',
+            'cross_account_access': 'yes',
             'cross_account_access_role': 'arn:aws:iam::589435931329:role/S3CrossAccountAccess',
             }
 
